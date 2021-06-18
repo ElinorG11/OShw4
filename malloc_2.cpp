@@ -2,7 +2,9 @@
 // Created by student on 6/18/21.
 //
 
-#include <unistd.h>
+// For Debugging
+#include "malloc_2.h"
+// #include <unistd.h> // Don't forget to return this after removing "malloc_1.h"
 
 struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, size is 32 bytes
     size_t size; // 8 bytes
@@ -12,6 +14,9 @@ struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, si
 };
 
 MallocMetadata *head = nullptr;
+
+// For Debugging
+
 
 // Do we want to hold a class?
 // From pdf: You should always search for empty blocks in an ascending manner.
@@ -35,14 +40,14 @@ public:
  *      - If ‘size’ is more than 10^8 , return NULL.
  *      - If sbrk fails, return NULL.
  */
-void smalloc(size_t size) {
+void* smalloc(size_t size) {
     // check size == 0 || size > 10^8
 
     // iterate over the MallocMetadata list & try to find allocation of size bytes
 
     // if not found - use sbrk() for allocation
 
-    // check return values from sbrk(). from sbrk() documentation, should do the following:
+    // check return values from sbrk(). by sbrk() documentation https://nxmnpg.lemoda.net/2/sbrk should do the following
     // res = sbrk() ...
     // if (res == (void*)-1) ...
 

@@ -1,7 +1,9 @@
 //
 // Created by student on 6/18/21.
 //
-#include <unistd.h>
+// For Debugging
+#include "malloc_1.h"
+// #include <unistd.h> // Don't forget to return this after removing "malloc_1.h"
 
 /* Tries to allocate ‘size’ bytes.
  * Return value:
@@ -11,7 +13,7 @@
  *      - If ‘size’ is more than 10^8 , return NULL.
  *      - If sbrk fails, return NULL.
  * */
-void smalloc(size_t size) {
+void* smalloc(size_t size) {
     // check size == 0 || size > 10^8
 
     // use sbrk() for allocation

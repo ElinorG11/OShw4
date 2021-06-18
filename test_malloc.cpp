@@ -2,6 +2,10 @@
 // Created by student on 6/18/21.
 //
 
+#include <iostream>
+//#include "malloc_1.h"
+#include "malloc_2.h"
+
 int main() {
     // find maxial allocation for sbrk() to fail
     // struct rlimit rlp;
@@ -96,6 +100,32 @@ int main() {
     /* Done tests Part 1 */
 
     /* Start tests Part 2 */
+
+    // Test sfree
+    ptr = smalloc(70);
+    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+    sfree(ptr);
+    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+
+    // Test scalloc
+
+    // Test srealloc
+
+    /* Done tests Part 2 */
+
+    /* Start tests Part 3 */
+    /* Done tests Part 3 */
 
     return 0;
 }
