@@ -16,10 +16,8 @@ void smalloc(size_t size) {
 
     // use sbrk() for allocation
 
-    // check return values from sbrk() - two options for conversion that I checked (& hopefully they really do work):
-    // int conversion = *(int*)res;
-    // int conversion = *reinterpret_cast<int*>(res);
-    // if (conversion == -1) ...
+    // check return values from sbrk(). https://nxmnpg.lemoda.net/2/sbrk by the sbrk documentation here should check
+    // if (res == (void*)-1) ...
 
     // return something
 }

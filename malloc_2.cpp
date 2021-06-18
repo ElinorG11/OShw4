@@ -4,11 +4,11 @@
 
 #include <unistd.h>
 
-struct MallocMetadata {
-    size_t size;
-    bool is_free;
-    MallocMetadata *next;
-    MallocMetadata *prev;
+struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, size is 32 bytes
+    size_t size; // 8 bytes
+    bool is_free; // 1 byte
+    MallocMetadata *next; // 8 bytes
+    MallocMetadata *prev; // 8 bytes
 };
 
 MallocMetadata *head = nullptr;
@@ -42,16 +42,26 @@ void smalloc(size_t size) {
 
     // if not found - use sbrk() for allocation
 
-    // check return values from sbrk() - two options for conversion that I checked (& hopefully they really do work):
-    // int conversion = *(int*)res;
-    // int conversion = *reinterpret_cast<int*>(res);
-    // if (conversion == -1) ...
+    // check return values from sbrk(). from sbrk() documentation, should do the following:
+    // res = sbrk() ...
+    // if (res == (void*)-1) ...
+
 
     // add new allocation at the end of the list - make sure it's sorted.
+    // MallocMetadata *metadata = (MallocMetadata*) addr_returned_from_sbrk
     // consider corner case where list is empty
     // As I see it, since sbrk() always increases the heap, i.e., it returns higher addresses,
     // and we never decrease the brk ptr or remove elements from the list - it is sorted by default
     // all we need to do is to ass new allocation using sbrk() to the end of the list
+
+    // since now addr is pointing to the part of the block which also hold the metadata
+    // we need to promote addr by sizeof(MallocMetadata) bytes.
+    // since addr is void* type, we can use the following conversions for pointer arithmetics:
+    // addr = (void*)((char*)addr + sizeof(MallocMetadata));
+    // some shit 'bout void* -> char* from here https://stackoverflow.com/questions/19581161/c-change-the-value-a-void-pointer-represents
+    // and here https://www.sparknotes.com/cs/pointers/whyusepointers/section1/
+    // If a pointer's type is void*, the pointer can point to (almost) any variable.
+    // since we want to perform the pointer arithmetic in byte scale - we cast it to char*
 
     // return something
 }
