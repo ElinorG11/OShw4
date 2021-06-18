@@ -3,8 +3,10 @@
 //
 
 // For Debugging
-#include "malloc_2.h"
-// #include <unistd.h> // Don't forget to return this after removing "malloc_1.h"
+#include <iostream>
+
+#include <cstring>
+#include <unistd.h>
 
 struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, size is 32 bytes
     size_t size; // 8 bytes
@@ -14,8 +16,6 @@ struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, si
 };
 
 MallocMetadata *head = nullptr;
-
-// For Debugging
 
 
 // Do we want to hold a class?
@@ -42,15 +42,34 @@ public:
  */
 void* smalloc(size_t size) {
     // check size == 0 || size > 10^8
+    if(size == 0 || size > 1e8) {
+        return nullptr;
+    }
 
     // iterate over the MallocMetadata list & try to find allocation of size bytes
+    MallocMetadata *iterator = head;
+    MallocMetadata *iterator_prev = head;
+    void* addr;
+
+    while(iterator != nullptr) {
+        if(iterator->size >= size && iterator->is_free){
+            iterator->is_free = false;
+            addr = (void*)(iterator + sizeof(MallocMetadata));
+            return addr;
+        }
+        iterator_prev = iterator;
+        iterator = iterator->next;
+    }
 
     // if not found - use sbrk() for allocation
+    addr = sbrk(size);
 
     // check return values from sbrk(). by sbrk() documentation https://nxmnpg.lemoda.net/2/sbrk should do the following
     // res = sbrk() ...
     // if (res == (void*)-1) ...
-
+    if(addr == (void*)-1) {
+        return nullptr;
+    }
 
     // add new allocation at the end of the list - make sure it's sorted.
     // MallocMetadata *metadata = (MallocMetadata*) addr_returned_from_sbrk
@@ -68,7 +87,23 @@ void* smalloc(size_t size) {
     // If a pointer's type is void*, the pointer can point to (almost) any variable.
     // since we want to perform the pointer arithmetic in byte scale - we cast it to char*
 
+    MallocMetadata *new_metadata = (MallocMetadata*)addr;
+    new_metadata->size = size;
+    new_metadata->is_free = false;
+    new_metadata->next = nullptr;
+
+    if(head == nullptr) {
+        head = new_metadata;
+        new_metadata->prev = nullptr;
+    } else {
+        new_metadata->prev = iterator_prev;
+        iterator_prev->next = new_metadata;
+    }
+
+    addr = (void*)((char*)addr + sizeof(MallocMetadata));
+
     // return something
+    return addr;
 }
 
 /* Searches for a free block of up to ‘num’ elements, each ‘size’ bytes that are all set to 0
@@ -81,23 +116,42 @@ void* smalloc(size_t size) {
  *      - If sbrk fails, return NULL.
  * */
 void* scalloc(size_t num, size_t size) {
+    // check size == 0 || size > 10^8
+    if(size == 0 || size > 1e8) {
+        return nullptr;
+    }
+
     // calc allocation_size num*size
 
     // use addr = smalloc for allocation
+    void* addr = smalloc(num*size);
+
+    if(addr == nullptr) {
+        return nullptr;
+    }
 
     // reset bits using memset(addr,0,allocation_size)
     // as indicated here http://www.cplusplus.com/reference/cstring/memset/
+    memset(addr,0,num*size);
 
     // return addr
+    return addr;
 }
 
-/*Releases the usage of the block that starts with the pointer ‘p’.
+/* Releases the usage of the block that starts with the pointer ‘p’.
  * If ‘p’ is NULL or already released, simply returns.
  * Presume that all pointers ‘p’ truly points to the beginning of an allocated block.
  * */
 void sfree(void* p){
+    if(p == nullptr) {
+        return;
+    }
+
     // calculate somehow block_to_free = &p - sizeof(MallocMetadata)
+    MallocMetadata* metadata = (MallocMetadata*)((char*)p - sizeof(MallocMetadata));
+
     // mark bock_to_free->is_free = true;
+    metadata->is_free = true;
 }
 
 /* If ‘size’ is smaller than the current block’s size, reuses the same block. Otherwise,
@@ -113,49 +167,107 @@ void sfree(void* p){
  *      - Do not free ‘oldp’ if srealloc() fails.
  * */
 void* srealloc(void* oldp, size_t size) {
+    // check size == 0 || size > 10^8
+    if(size == 0 || size > 1e8) {
+        return nullptr;
+    }
+
     // if(!oldp) return smalloc(size)
+    void *addr;
+    if(oldp == nullptr) {
+        addr = smalloc(size);
+        return addr;
+    }
 
     // calculate address old_block = &oldp - sizeof(MallocMetadata)
     // check if old_block->size >= size. if true, return oldp
+    MallocMetadata* metadata_oldp = (MallocMetadata*)((char*)oldp - sizeof(MallocMetadata));
+    size_t size_oldp = metadata_oldp->size;
+    if(size_oldp >= size) {
+        return oldp;
+    }
 
     // use addr = smalloc to allocate space - check for success
+    addr = smalloc(size);
+    if(addr == (void*)-1) {
+        return nullptr;
+    }
 
     // copy data using memcpy(addr, oldp, old_block->size)
     // as indicated here http://www.cplusplus.com/reference/cstring/memcpy/
+    void* res = memcpy(addr, oldp, size_oldp);
+
+    if(*(int*)res > 0) {
+        return nullptr;
+    }
 
     // mark old_block->is_free = true
+    metadata_oldp->is_free = true;
 
     // return addr
+    return addr;
 }
 
 /* Returns the number of allocated blocks in the heap that are currently free */
 size_t _num_free_blocks() {
-    // check if list is null
-
+    size_t counter = 0;
+    MallocMetadata *iterator = head;
     // iterate list & count elements which satisfy element->is_free = true
+    while (iterator != nullptr) {
+        if(iterator->is_free) {
+            counter++;
+        }
+        iterator = iterator->next;
+    }
+
+    return counter;
 }
 
 /* Returns the number of bytes in all allocated blocks in the heap that are currently free,
 excluding the bytes used by the meta-data structs. */
 size_t _num_free_bytes() {
-    // check if list is null
-
     // iterate list & count elements * element->size if element->is_free == true - sizeof(metadata)
+    size_t counter = 0;
+    MallocMetadata *iterator = head;
+    // iterate list & count elements which satisfy element->is_free = true
+    while (iterator != nullptr) {
+        if(iterator->is_free) {
+            counter += iterator->size;
+        }
+        iterator = iterator->next;
+    }
+
+    return counter;
 }
 
 /* Returns the overall (free and used) number of allocated blocks in the heap. */
 size_t _num_allocated_blocks() {
-    // check if list is null
-
     // iterate list & count elements
+    size_t counter = 0;
+    MallocMetadata *iterator = head;
+    // iterate list & count elements which satisfy element->is_free = true
+    while (iterator != nullptr) {
+        counter++;
+        iterator = iterator->next;
+    }
+
+    return counter;
 }
 
 /* Returns the overall number (free and used) of allocated bytes in the heap, excluding
 the bytes used by the meta-data structs. */
 size_t _num_allocated_bytes() {
-    // check if list is null
-
     // iterate list & count elements * element->size
+    // iterate list & count elements * element->size if element->is_free == true - sizeof(metadata)
+    size_t counter = 0;
+    MallocMetadata *iterator = head;
+    // iterate list & count elements which satisfy element->is_free = true
+    while (iterator != nullptr) {
+        counter += iterator->size;
+        iterator = iterator->next;
+    }
+
+    return counter;
 }
 
 /* Returns the number of bytes of a single meta-data structure in your system. */
@@ -165,16 +277,131 @@ size_t _size_meta_data() {
 
 /* Returns the overall number of meta-data bytes currently in the heap. */
 size_t _num_meta_data_bytes() {
-    // check if list is null
-
     // iterate list & count num_of_elements * metadata->size
-    // ... *iterator = ...
-    // size_t count = 0;
-    // while(iterator) {
-    //      count++;
-    //      iterator = iterator->next;
-    // }
-    // return count * _size_meta_data();
+    size_t counter = 0;
+    MallocMetadata *iterator = head;
+    // iterate list & count elements which satisfy element->is_free = true
+    while (iterator != nullptr) {
+        counter += iterator->size;
+        iterator = iterator->next;
+    }
+
+    return (counter * _size_meta_data());
+}
+
+int main() {
+    // find maximal allocation for sbrk() to fail
+    // struct rlimit rlp;
+    // getrlimit(RLIMIT_DATA,&rlp);
+    // std::cout << rlp.rlim_max << std::endl;
+
+    // Test Errors
+
+    // zero size allocation
+    void* ptr;
+    ptr = smalloc(0);
+    if(ptr == nullptr) {
+        std::cout << "SUCCESS: Test 0 size allocation failed" << std::endl;
+    } else {
+        std::cout << "FAIL: Test 0 size allocation succeeded" << std::endl;
+    }
+
+    // big allocation
+    ptr = smalloc(1e8 + 1);
+    if(ptr == nullptr) {
+        std::cout << "SUCCESS: Test 1e8 size allocation failed" << std::endl;
+    } else {
+        std::cout << "FAIL: Test 1e8 size allocation succeeded" << std::endl;
+    }
+
+    // put size > 1e8 check in comments & try to make sbrk() fail
+    ptr = smalloc(18446744073709551615 + 1);
+    if(ptr == nullptr) {
+        std::cout << "SUCCESS: Test sbrk fail" << std::endl;
+    } else {
+        std::cout << "FAIL: Test sbrk fail" << std::endl;
+    }
+
+    // Test concurrent allocations & check their size
+    ptr = smalloc(20);
+    void* new_ptr = (void*)((char*)head + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 20. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 20. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    ptr = smalloc(50);
+    new_ptr = (void*)((char*)head + 0x54);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 50. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 50. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    ptr = smalloc(1e3);
+    new_ptr = (void*)((char*)new_ptr + 0x32 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    ptr = smalloc(2*1e5);
+    new_ptr = (void*)((char*)new_ptr + 1000 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 2*1e5. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 2*1e5. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    ptr = smalloc(769);
+    new_ptr = (void*)((char*)new_ptr + 200000 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 769. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 769. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    ptr = smalloc(1);
+    new_ptr = (void*)((char*)new_ptr + 769 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 1. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 1. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    ptr = smalloc(3);
+    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+
+    // Test sfree
+    ptr = smalloc(70);
+    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+    sfree(ptr);
+    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+
+    // Test scalloc
+
+    // Test srealloc
+
+    return 0;
 }
 
 
