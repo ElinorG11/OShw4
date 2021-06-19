@@ -176,7 +176,7 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
 
     }
 
-
+//
     //case where both prev and next are free
     if(block_to_combine->prev->is_free && block_to_combine->next->is_free){
         int index = GetHistogramIndex(block_to_combine->prev->size);
