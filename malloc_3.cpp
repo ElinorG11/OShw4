@@ -20,6 +20,7 @@ struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, si
 
 
 MallocMetadata *head = nullptr;
+MallocMetadata *head_mmap = nullptr;
 
 // challenge 0
 // should use 128-bin (histogram) to maintain free blocks of different size
@@ -148,6 +149,8 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
     //check if block is head and the only block
     if(block_to_combine->prev == nullptr){
         if(block_to_combine->next == nullptr) {
+            index = GetHistogramIndex(block_to_combine->size);
+            AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
             return;
         }
     // check if block is head and not the only block
@@ -160,6 +163,8 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
             index = GetHistogramIndex(block_to_combine->size);
             AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
         }
+        index = GetHistogramIndex(block_to_combine->size);
+        AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
         return;
     }
     // case block is last
@@ -172,6 +177,8 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
             index = GetHistogramIndex(block_to_combine->prev->size);
             AddItemBysize(free_blocks_histogram[index], block_to_combine->prev, index);
         }
+        index = GetHistogramIndex(block_to_combine->size);
+        AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
         return;
 
     }
@@ -192,14 +199,33 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
         //add to free blocks list
         index = GetHistogramIndex(block_to_combine->prev->size);
         AddItemBysize(free_blocks_histogram[index], block_to_combine->prev, index);
+        return;
 
     } else if(block_to_combine->prev->is_free){
+        int index = GetHistogramIndex(block_to_combine->prev->size);
+        RemoveFreeItem(free_blocks_histogram[index],block_to_combine->prev,index);
+        block_to_combine->prev->size += block_to_combine->size + sizeof(MallocMetadata);
+        block_to_combine->prev->next = block_to_combine->next;
+        index = GetHistogramIndex(block_to_combine->prev->size);
+        AddItemBysize(free_blocks_histogram[index], block_to_combine->prev, index);
+        return;
 
     } else if(block_to_combine->next->is_free){
-
-    } else {
+        int index = GetHistogramIndex(block_to_combine->next->size);
+        RemoveFreeItem(free_blocks_histogram[index],block_to_combine->next,index);
+        block_to_combine->size += block_to_combine->next->size + sizeof(MallocMetadata);
+        block_to_combine->next->next->prev = block_to_combine;
+        block_to_combine->next = block_to_combine->next->next;
+        index = GetHistogramIndex(block_to_combine->size);
+        AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
+        return;
 
     }
+    index = GetHistogramIndex(block_to_combine->size);
+    AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
+    return;
+
+
     // iterate the free block hist to find the currently freed chunk (calc bin)
 
     // check if prev & next are free
@@ -220,6 +246,31 @@ void* smalloc(size_t size) {
     // check size == 0 || size > 10^8
     if(size == 0 || size > 1e8) {
         return nullptr;
+    }
+
+    if(size >= 128*1024){
+        void* addr = mmap(NULL, size + sizeof(MallocMetadata), prot, flags, fildes, 0);
+        if(addr == (void*)-1) {
+            return nullptr;
+        }
+
+        MallocMetadata *new_metadata = (MallocMetadata*)addr;
+        new_metadata->size = size;
+        new_metadata->is_free = false;
+        new_metadata->next = nullptr;
+        new_metadata->next_free_item = nullptr;
+        new_metadata->prev_free_item = nullptr;
+
+        if(head_mmap == nullptr) {
+            head_mmap = new_metadata;
+            new_metadata->prev = nullptr;
+        } else {
+            new_metadata->prev = iterator_prev;
+            iterator_prev->next = new_metadata;
+        }
+
+        addr = (void*)((char*)addr + sizeof(MallocMetadata));
+        return addr;
     }
 
     // challenge 4
@@ -293,15 +344,43 @@ void* smalloc(size_t size) {
     // required allocation.
     // now, we can call sbrk with the effective size and just update the size field in the metadata of the "Wilderness" block
 
-    // if not found - use sbrk() for allocation
-    addr = sbrk(size + sizeof(MallocMetadata));
+    if(iterator_prev->is_free) {
+        size_t extension_size = size - iterator_prev->size;
+
+        addr = sbrk(extension_size);
+        if(addr == (void*)-1) {
+            return nullptr;
+        }
+        iterator_prev->size += extension_size;
+
+    } else {
+        // if not found - use sbrk() for allocation
+        addr = sbrk(size + sizeof(MallocMetadata));
+        if(addr == (void*)-1) {
+            return nullptr;
+        }
+
+        MallocMetadata *new_metadata = (MallocMetadata*)addr;
+        new_metadata->size = size;
+        new_metadata->is_free = false;
+        new_metadata->next = nullptr;
+        new_metadata->next_free_item = nullptr;
+        new_metadata->prev_free_item = nullptr;
+
+        if(head == nullptr) {
+            head = new_metadata;
+            new_metadata->prev = nullptr;
+        } else {
+            new_metadata->prev = iterator_prev;
+            iterator_prev->next = new_metadata;
+        }
+
+        addr = (void*)((char*)addr + sizeof(MallocMetadata));
+    }
 
     // check return values from sbrk(). by sbrk() documentation https://nxmnpg.lemoda.net/2/sbrk should do the following
     // res = sbrk() ...
     // if (res == (void*)-1) ...
-    if(addr == (void*)-1) {
-        return nullptr;
-    }
 
     // add new allocation at the end of the list - make sure it's sorted.
     // MallocMetadata *metadata = (MallocMetadata*) addr_returned_from_sbrk
@@ -320,22 +399,7 @@ void* smalloc(size_t size) {
     // since we want to perform the pointer arithmetic in byte scale - we cast it to char*
 
 
-    MallocMetadata *new_metadata = (MallocMetadata*)addr;
-    new_metadata->size = size;
-    new_metadata->is_free = false;
-    new_metadata->next = nullptr;
-    new_metadata->next_free_item = nullptr;
-    new_metadata->prev_free_item = nullptr;
 
-    if(head == nullptr) {
-        head = new_metadata;
-        new_metadata->prev = nullptr;
-    } else {
-        new_metadata->prev = iterator_prev;
-        iterator_prev->next = new_metadata;
-    }
-
-    addr = (void*)((char*)addr + sizeof(MallocMetadata));
 
     // return something
     return addr;
@@ -407,10 +471,11 @@ void sfree(void* p){
 
     // mark block_to_free->is_free = true;
     metadata->is_free = true;
+    _combine_blocks(metadata);
+    return;
 
     // Add item to free block list
-    int index = GetHistogramIndex(metadata->size);
-    AddItemBysize(free_blocks_histogram[index], metadata, index);
+
 }
 
 /* If ‘size’ is smaller than the current block’s size, reuses the same block. Otherwise,
