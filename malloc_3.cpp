@@ -145,15 +145,35 @@ void _split_blocks(MallocMetadata *chunk_to_split, size_t allocation_size) {
 // should we use _combine_blocks since it's our assistance func?
 void _combine_blocks(MallocMetadata *block_to_combine) {
 
-    //check cases - first and last
+    //check if block is head and the only block
     if(block_to_combine->prev == nullptr){
         if(block_to_combine->next == nullptr) {
             return;
         }
+    // check if block is head and not the only block
         if(block_to_combine->next->is_free){
             int index = GetHistogramIndex(block_to_combine->next->size);
             RemoveFreeItem(free_blocks_histogram[index],block_to_combine->next,index);
+            block_to_combine->size += block_to_combine->next->size + sizeof(MallocMetadata);
+            block_to_combine->next->next->prev = block_to_combine;
+            block_to_combine->next = block_to_combine->next->next;
+            index = GetHistogramIndex(block_to_combine->size);
+            AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
         }
+        return;
+    }
+    // case block is last
+    if(block_to_combine->next == nullptr){
+        if(block_to_combine->prev->is_free){
+            int index = GetHistogramIndex(block_to_combine->prev->size);
+            RemoveFreeItem(free_blocks_histogram[index],block_to_combine->prev,index);
+            block_to_combine->prev->size += block_to_combine->size + sizeof(MallocMetadata);
+            block_to_combine->prev->next = block_to_combine->next;
+            index = GetHistogramIndex(block_to_combine->prev->size);
+            AddItemBysize(free_blocks_histogram[index], block_to_combine->prev, index);
+        }
+        return;
+
     }
 
 
