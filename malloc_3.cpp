@@ -33,6 +33,14 @@ void split_blocks(MallocMetadata *chunk_to_split, int allocation_size) {
 
     // create new metadata element and make it point to the space after the pointer we got from smalloc by allocation
     // size bytes
+    MallocMetadata *new_metadata = (MallocMetadata*)((char*)((void *)(chunk_to_split)) + sizeof(MallocMetadata) + allocation_size);
+    new_metadata->size = chunk_to_split->size - sizeof(MallocMetadata) - allocation_size;
+    new_metadata->next = chunk_to_split->next;
+    new_metadata->prev = chunk_to_split;
+    int index = GetHistogramIndex(new_metadata->size);
+    AddItemBysize(free_blocks_histogram[index],new_metadata, index);
+    chunk_to_split->next = new_metadata;
+    chunk_to_split->size = allocation_size;
 
     // update all necessary field such as size, prev & next for the new element
 
@@ -40,7 +48,43 @@ void split_blocks(MallocMetadata *chunk_to_split, int allocation_size) {
 }
 // challenge 2
 // should we use _combine_blocks since it's our assistance func?
-void combine_blocks() {
+void _combine_blocks(MallocMetadata *block_to_combine) {
+
+    //check cases - first and last
+    if(block_to_combine->prev == nullptr){
+        if(block_to_combine->next == nullptr) {
+            return;
+        }
+        if(block_to_combine->next->is_free){
+            int index = GetHistogramIndex(block_to_combine->next->size);
+            RemoveFreeItem(free_blocks_histogram[index],block_to_combine->next,index);
+        }
+    }
+
+
+    //case where both prev and next are free
+    if(block_to_combine->prev->is_free && block_to_combine->next->is_free){
+        int index = GetHistogramIndex(block_to_combine->prev->size);
+        //remove adjacent free blocks from free list
+        RemoveFreeItem(free_blocks_histogram[index],block_to_combine->prev,index);
+        index = GetHistogramIndex(block_to_combine->next->size);
+        RemoveFreeItem(free_blocks_histogram[index],block_to_combine->next,index);
+        //combine the three blocks
+        block_to_combine->prev->size += block_to_combine->size + block_to_combine->next->size + 2*(sizeof(MallocMetadata));
+        block_to_combine->prev->next = block_to_combine->next->next;
+        block_to_combine->next->next->prev = block_to_combine->prev;
+
+        //add to free blocks list
+        index = GetHistogramIndex(block_to_combine->prev->size);
+        AddItemBysize(free_blocks_histogram[index], block_to_combine->prev, index);
+
+    } else if(block_to_combine->prev->is_free){
+
+    } else if(block_to_combine->next->is_free){
+
+    } else {
+
+    }
     // iterate the free block hist to find the currently freed chunk (calc bin)
 
     // check if prev & next are free
@@ -115,10 +159,12 @@ void* smalloc(size_t size) {
         if(iterator->size >= size && iterator->is_free){
             iterator->is_free = false;
             addr = (void*)(iterator + sizeof(MallocMetadata));
+            RemoveFreeItem(free_blocks_histogram[index],iterator,index);
+            _split_blocks(iterator,size);
             return addr;
         }
         iterator_prev = iterator;
-        iterator = iterator->next;
+        iterator = iterator->next_free_item;
     }
 
     // challenge 3
@@ -132,7 +178,7 @@ void* smalloc(size_t size) {
     // now, we can call sbrk with the effective size and just update the size field in the metadata of the "Wilderness" block
 
     // if not found - use sbrk() for allocation
-    addr = sbrk(size);
+    addr = sbrk(size + sizeof(MallocMetadata));
 
     // check return values from sbrk(). by sbrk() documentation https://nxmnpg.lemoda.net/2/sbrk should do the following
     // res = sbrk() ...
@@ -241,8 +287,12 @@ void sfree(void* p){
     // calculate somehow block_to_free = &p - sizeof(MallocMetadata)
     MallocMetadata* metadata = (MallocMetadata*)((char*)p - sizeof(MallocMetadata));
 
-    // mark bock_to_free->is_free = true;
+    // mark block_to_free->is_free = true;
     metadata->is_free = true;
+
+    // Add item to free block list
+    int index = GetHistogramIndex(metadata->size);
+    AddItemBysize(free_blocks_histogram[index], metadata, index);
 }
 
 /* If ‘size’ is smaller than the current block’s size, reuses the same block. Otherwise,
@@ -294,7 +344,7 @@ void* srealloc(void* oldp, size_t size) {
 
     // perhaps we should change that to sfree(oldp) and then sfree will handle all the updates of the free block hist?
     // mark old_block->is_free = true
-    metadata_oldp->is_free = true;
+    sfree(oldp);
 
     // return addr
     return addr;
