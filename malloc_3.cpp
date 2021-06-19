@@ -13,13 +13,105 @@ struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, si
     bool is_free; // 1 byte
     MallocMetadata *next; // 8 bytes
     MallocMetadata *prev; // 8 bytes
+    MallocMetadata *next_free_item; // 8 bytes
+    MallocMetadata *prev_free_item; // 8 bytes
 };
+
+
 
 MallocMetadata *head = nullptr;
 
 // challenge 0
 // should use 128-bin (histogram) to maintain free blocks of different size
-// MallocMetadata *free_blocks_histogram[128];
+MallocMetadata *free_blocks_histogram[128];
+
+/*
+ * Get histogram index by size
+ */
+
+int GetHistogramIndex(size_t size){
+    int index = size/1024;
+    return index;
+}
+
+void AddItemBysize(MallocMetadata *head, MallocMetadata *item, int index){
+
+    // if head is null
+    if(head == nullptr){
+        head = item;
+        item->next_free_item = nullptr;
+        item->prev_free_item = nullptr;
+        return;
+    }
+
+    // if item should be first
+    if(item->size <= head->size){
+        head->prev_free_item = item;
+        item->next_free_item = head;
+        item->prev_free_item = nullptr;
+        free_blocks_histogram[index] = item;
+        return;
+    }
+  // if there is only one item in the list
+    if(head->next_free_item == nullptr){
+        head->next_free_item = item;
+        item->next_free_item = nullptr;
+        item->prev_free_item = head;
+        return;
+    }
+
+    // 2 or more items and the new item is not the smallest
+    MallocMetadata* itr = head->next_free_item;
+    MallocMetadata* itr_prev = head;
+
+    while(itr != nullptr){
+        if(itr_prev->size <= item->size && itr->size >= item->size) {
+            itr_prev->next_free_item = item;
+            itr->prev_free_item = item;
+            item->prev_free_item = itr_prev;
+            item->next_free_item = itr;
+            return;
+        }
+        itr_prev = itr;
+        itr = itr->next_free_item;
+    }
+    //item is the largest element
+    itr_prev->next_free_item = item;
+    item->prev_free_item = itr_prev;
+    return;
+
+}
+
+
+void RemoveFreeItem(MallocMetadata *head, MallocMetadata *item, int index) {
+    if(head == nullptr) return;
+
+    // case where item to remove is head
+    if(item == head){
+        if(head->next_free_item != nullptr){
+            item->next_free_item->prev_free_item = nullptr;
+        }
+        free_blocks_histogram[index] = item->next_free_item;
+        item->next_free_item = nullptr;
+        item->prev_free_item = nullptr;
+        return;
+    }
+    // case where item is last
+    if(item->next_free_item == nullptr){
+        item->prev_free_item->next_free_item = nullptr;
+        item->prev_free_item = nullptr;
+        return;
+    }
+
+    item->prev_free_item->next_free_item = item->next_free_item;
+    item->next_free_item->prev_free_item = item->prev_free_item;
+    item->next_free_item = nullptr;
+    item->prev_free_item = nullptr;
+    return;
+
+}
+
+
 
 // challenge 4
 // in the pdf they recommended to use another list for mmap allocated blocks, separate from the list of other allocations
@@ -27,9 +119,12 @@ MallocMetadata *head = nullptr;
 
 // challenge 1
 // should we use _split_blocks since it's our assistance func?
-void split_blocks(MallocMetadata *chunk_to_split, int allocation_size) {
+void _split_blocks(MallocMetadata *chunk_to_split, size_t allocation_size) {
     // check if after subtracting from the block size the desired allocation size + metadata size
     // we remain with at least 128 byte sized block
+    if( chunk_to_split->size - sizeof(MallocMetadata) - allocation_size < 128){
+        return;
+    }
 
     // create new metadata element and make it point to the space after the pointer we got from smalloc by allocation
     // size bytes
@@ -151,8 +246,9 @@ void* smalloc(size_t size) {
     // and then we should add the allocated part to the allocation list and to keep the free part in the free block hist?
 
     // iterate over the MallocMetadata list & try to find allocation of size bytes
-    MallocMetadata *iterator = head;
-    MallocMetadata *iterator_prev = head;
+    int index = GetHistogramIndex(size);
+    MallocMetadata *iterator = free_blocks_histogram[index];
+    MallocMetadata *iterator_prev = iterator;
     void* addr;
 
     while(iterator != nullptr) {
@@ -208,6 +304,8 @@ void* smalloc(size_t size) {
     new_metadata->size = size;
     new_metadata->is_free = false;
     new_metadata->next = nullptr;
+    new_metadata->next_free_item = nullptr;
+    new_metadata->prev_free_item = nullptr;
 
     if(head == nullptr) {
         head = new_metadata;
