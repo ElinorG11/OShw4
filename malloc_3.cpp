@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <unistd.h>
+#include <sys/mman.h>
 
 struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, size is 32 bytes
     size_t size; // 8 bytes
@@ -151,7 +152,7 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
             return;
         }
         if(block_to_combine->next->is_free){
-            int index = GetHistogramIndex(block_to_combine->next->size);
+            index = GetHistogramIndex(block_to_combine->next->size);
             RemoveFreeItem(free_blocks_histogram[index],block_to_combine->next,index);
         }
     }
@@ -202,6 +203,8 @@ void* smalloc(size_t size) {
         return nullptr;
     }
 
+    void* addr;
+
     // challenge 4
     // check if size fits mmap
     // if so, iterate to the end of the mmap list (I guess it should be sorted as well)
@@ -249,7 +252,6 @@ void* smalloc(size_t size) {
     int index = GetHistogramIndex(size);
     MallocMetadata *iterator = free_blocks_histogram[index];
     MallocMetadata *iterator_prev = iterator;
-    void* addr;
 
     while(iterator != nullptr) {
         if(iterator->size >= size && iterator->is_free){
