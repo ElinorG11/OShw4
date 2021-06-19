@@ -360,6 +360,7 @@ void* smalloc(size_t size) {
             return nullptr;
         }
 
+        //
         MallocMetadata *new_metadata = (MallocMetadata*)addr;
         new_metadata->size = size;
         new_metadata->is_free = false;
