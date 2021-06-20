@@ -45,6 +45,7 @@ void AddItemBysize(MallocMetadata *head, MallocMetadata *item, int index){
         head = item;
         item->next_free_item = nullptr;
         item->prev_free_item = nullptr;
+        free_blocks_histogram[index] = item;
         return;
     }
 
@@ -346,7 +347,7 @@ void* smalloc(size_t size) {
     // required allocation.
     // now, we can call sbrk with the effective size and just update the size field in the metadata of the "Wilderness" block
 
-    if(iterator_prev->is_free) {
+    if(iterator_prev != nullptr && iterator_prev->is_free) {
         size_t extension_size = size - iterator_prev->size;
 
         addr = sbrk(extension_size);
@@ -380,6 +381,13 @@ void* smalloc(size_t size) {
         new_metadata->next = nullptr;
         new_metadata->next_free_item = nullptr;
         new_metadata->prev_free_item = nullptr;
+
+        iterator = head;
+        iterator_prev = iterator;
+        while(iterator != nullptr) {
+            iterator_prev = iterator;
+            iterator = iterator->next;
+        }
 
         if(head == nullptr) {
             head = new_metadata;
@@ -1069,8 +1077,8 @@ int main() {
 
 
     // Test challenge 0
+    /*
     std::cout << "challenge 0 debug" << std::endl;
-    void* ptr;
 
     ptr = smalloc(70);
 
@@ -1100,9 +1108,107 @@ int main() {
 
     // print free list & make sure it is sorted
 
+    // allocate TONS
+    void* ptr1 = smalloc(100);
+    void* ptr2 = smalloc(3000);
+    void* ptr3 = smalloc(4000);
+    void* ptr4 = smalloc(3500);
+    void* ptr5 = smalloc(1e3);
+    void* ptr6 = smalloc(1500);
+    void* ptr7 = smalloc(2240);
+    void* ptr8 = smalloc(7789);
+    void* ptr9 = smalloc(1e5);
+    void* ptr10 = smalloc(14589);
+    void* ptr11 = smalloc(145678);
+    void* ptr12 = smalloc(876390);
+    void* ptr13 = smalloc(127);
+    void* ptr14 = smalloc(20);
+    void* ptr15 = smalloc(5);
+    void* ptr16 = smalloc(1347990);
+    void* ptr17 = smalloc(15);
 
+
+    sfree(ptr1);
+    sfree(ptr2);
+    sfree(ptr3);
+    sfree(ptr4);
+    sfree(ptr5);
+    sfree(ptr6);
+    sfree(ptr7);
+    sfree(ptr8);
+    sfree(ptr9);
+    sfree(ptr10);
+    sfree(ptr11);
+    sfree(ptr12);
+    sfree(ptr13);
+    sfree(ptr14);
+    sfree(ptr15);
+    sfree(ptr16);
+    sfree(ptr17);
+
+
+
+
+    // iterate many
+
+    MallocMetadata *iterator = free_blocks_histogram[0];
+    for (int i = 0; i < 128; ++i) {
+        while (iterator != nullptr) {
+            std::cout << "bin #" << i<< " element size: " << iterator->size << std::endl;
+            iterator = iterator->next;
+        }
+
+    }
+
+    // much WOW
+
+    // over 9000!!!!!!!!!!!!!!!!!!!1
+    */
 
     // Test challenge 1
+    void* ptr1 = smalloc(1000);
+    void* ptr2 = smalloc(1000);
+    void* ptr3 = smalloc(1000);
+    void* ptr4 = smalloc(1000);
+    void* ptr5 = smalloc(1000);
+    void* ptr6 = smalloc(1000);
+    void* ptr7 = smalloc(1000);
+    void* ptr8 = smalloc(1000);
+
+    std::cout << "addr ptr2 before call to sfree: " << ptr2 << std::endl;
+    sfree(ptr2);
+
+    void* ptr9 = smalloc(20);
+
+    // print addr
+    std::cout << "addr ptr9 after call to sfree: " << ptr9 << " should be " << ptr2 << std::endl;
+
+    // print metadata
+    std::cout << "Test 1: allocated blocks(9) #" << _num_allocated_blocks() << " of(8000) " << _num_allocated_bytes() << std::endl;
+    std::cout << "Test 1: free blocks(1) #" << _num_free_blocks << " of(800) " << _num_free_bytes() << std::endl;
+
+
+    void* ptr10 = smalloc(20);
+
+    void* ptr11 = smalloc(20);
+
+    void* ptr12 = smalloc(800); // make sure next block we need to split is the one ptr5 was allocated at
+
+    sfree(ptr5);
+
+    void* ptr13 = smalloc(20);
+
+    void* ptr14 = smalloc(20);
+
+    void* ptr15 = smalloc(20);
+
+    void* ptr16 = smalloc(800);
+
+    sfree(ptr8);
+
+
+
+
 
     // Test challenge 2
 
