@@ -32,7 +32,7 @@ void* smalloc(size_t size) {
     // return something
     return addr;
 }
-
+/*
 int main() {
     // Test Errors
 
@@ -77,3 +77,4 @@ int main() {
     ptr = smalloc(827);
     std::cout << "addr of ptr is: " << ptr << std::endl;
 }
+*/

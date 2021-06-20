@@ -193,16 +193,15 @@ void* srealloc(void* oldp, size_t size) {
         return nullptr;
     }
 
+
     // copy data using memcpy(addr, oldp, old_block->size)
     // as indicated here http://www.cplusplus.com/reference/cstring/memcpy/
+    // no need to check validity of result (they didn't ask for it in the pdf and I'm not sure how to do it properly)
+    // the check we've used (*(int*)res > 0) causes SIGSEGV :(
     void* res = memcpy(addr, oldp, size_oldp);
 
-    if(*(int*)res > 0) {
-        return nullptr;
-    }
-
     // mark old_block->is_free = true
-    metadata_oldp->is_free = true;
+    sfree(oldp);
 
     // return addr
     return addr;
@@ -288,7 +287,7 @@ size_t _num_meta_data_bytes() {
 
     return (counter * _size_meta_data());
 }
-
+/*
 int main() {
     // find maximal allocation for sbrk() to fail
     // struct rlimit rlp;
@@ -633,29 +632,93 @@ int main() {
     */
 
     // Test srealloc
+    /*
     std::cout << "\n" << "Test srealloc" << std::endl;
-    void* new_ptr;
     ptr = srealloc(nullptr,20);
-    if(ptr == nullptr) {
-        std::cout << "SUCCESS: Test nullptr to srealloc failed as it should have." << std::endl;
-    } else {
-        std::cout << "FAIL: Test nullptr to srealloc didn't failed as it should have." << std::endl;
-    }
+    std::cout << "Test nullptr to srealloc returned the address: " << ptr << ". head is: " << head << std::endl;
 
-    std::cout << "Test 1: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
 
+    ptr = smalloc(70);
+    memset(ptr,5,10);
 
+    // should be the same addr since new size < old size
+    std::cout << "previous addr of ptr: " << ptr << std::endl;
+    ptr = srealloc(ptr,20);
+    std::cout << "Test re-allocation #0. new addr (same): " << ptr <<  " sample data: " << *(int*)ptr << std::endl;
+
+    std::cout << "Test 1: scalloc: allocated blocks(2): #" << _num_allocated_blocks() << " of(90) " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: scalloc: free blocks(0): #" << _num_free_blocks() << " of(0) " << _num_free_bytes() << " bytes" << std::endl;
 
     sfree(ptr);
 
-    std::cout << "Test 1: sfree: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1: sfree: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1.1: sfree: allocated blocks(2): #" << _num_allocated_blocks() << " of(90) " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1.1: sfree: free blocks(1): #" << _num_free_blocks() << " of(70) " << _num_free_bytes() << " bytes" << std::endl;
 
 
+    void* ptr1 = smalloc(110);
+    void* ptr2 = smalloc(279);
+    void* ptr3 = smalloc(1e4);
+    void* ptr4 = smalloc(2);
+    void* ptr5 = smalloc(5e7);
+
+    memset(ptr1,5,10);
+    memset(ptr2,5,10);
+    memset(ptr3,5,1);
+    memset(ptr4,5,1);
+    memset(ptr5,5,1);
+
+    std::cout << "previous addr of ptr1: " << ptr1 << std::endl;
+    ptr1 = srealloc(ptr1,20);
+    std::cout << "Test re-allocation #1. new addr: " << ptr1 <<  " sample data: " << *(int*)ptr1 << std::endl;
+
+    std::cout << "Test 1: srealloc: allocated blocks(6): #" << _num_allocated_blocks() << " of(50010479) " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: srealloc: free blocks(0): #" << _num_free_blocks() << " of(0) " << _num_free_bytes() << " bytes" << std::endl;
+
+    std::cout << "previous addr of ptr2: " << ptr2 << std::endl;
+    ptr2 = srealloc(ptr2,20);
+    std::cout << "Test re-allocation #2. new addr: " << ptr2 <<  " sample data: " << *(int*)ptr2 << std::endl;
+
+    std::cout << "Test 2: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 2: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    std::cout << "previous addr of ptr3: " << ptr3 << std::endl;
+    ptr3 = srealloc(ptr3,90);
+    std::cout << "Test re-allocation #3. new addr: " << ptr3 <<  " sample data: " << *(int*)ptr3 << std::endl;
+
+    std::cout << "Test 3: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 3: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+
+
+
+    std::cout << "previous addr of ptr4: " << ptr4 << std::endl;
+    ptr4 = srealloc(ptr4,1e6);
+    std::cout << "Test re-allocation #4. new addr: " << ptr4 <<  " sample data: " << *(int*)ptr4 << std::endl;
+
+    std::cout << "Test 4: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 4: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    sfree(ptr1);
+
+    std::cout << "Test 4.1: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 4.1: srealloc: free blocks(2): #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    sfree(ptr3);
+
+    std::cout << "Test 4.2: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 4.2: srealloc: free blocks(3): #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    std::cout << "previous addr of ptr5: " << ptr5 << std::endl;
+    ptr5 = srealloc(ptr5,800);
+    std::cout << "Test re-allocation #5. new addr: " << ptr5 <<  " sample data: " << *(int*)ptr5 << std::endl;
+
+    std::cout << "Test 5: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 5: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
     return 0;
 }
-
+*/
 
 
 
