@@ -54,7 +54,7 @@ void* smalloc(size_t size) {
     while(iterator != nullptr) {
         if(iterator->size >= size && iterator->is_free){
             iterator->is_free = false;
-            addr = (void*)(iterator + sizeof(MallocMetadata));
+            addr = (void*)((char*)iterator + sizeof(MallocMetadata));
             return addr;
         }
         iterator_prev = iterator;
@@ -62,7 +62,7 @@ void* smalloc(size_t size) {
     }
 
     // if not found - use sbrk() for allocation
-    addr = sbrk(size);
+    addr = sbrk(size + sizeof(MallocMetadata));
 
     // check return values from sbrk(). by sbrk() documentation https://nxmnpg.lemoda.net/2/sbrk should do the following
     // res = sbrk() ...
@@ -299,6 +299,8 @@ int main() {
 
     // zero size allocation
     void* ptr;
+    int size_met = 0x20; // sizeof MallocMetadata
+    /*
     ptr = smalloc(0);
     if(ptr == nullptr) {
         std::cout << "SUCCESS: Test 0 size allocation failed" << std::endl;
@@ -322,21 +324,26 @@ int main() {
         std::cout << "FAIL: Test sbrk fail" << std::endl;
     }
 
+
     // Test concurrent allocations & check their size
     ptr = smalloc(20);
-    void* new_ptr = (void*)((char*)head + 0x20);
+    void* new_ptr = (void*)((char*)head + size_met);
     if(new_ptr == ptr) {
         std::cout << "SUCCESS: Test allocation size 20. head: " << head << " new ptr: " << ptr << std::endl;
     } else {
         std::cout << "FAIL: Test allocation size 20. head: " << head << " new ptr: " << ptr << std::endl;
     }
 
+    std::cout << "num of allocated blocks #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+
+
     ptr = smalloc(50);
-    new_ptr = (void*)((char*)head + 0x54);
+    std::cout <<  _num_allocated_blocks() << std::endl;
+    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0x32 + _num_allocated_blocks()*size_met);
     if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 50. head: " << head << " new ptr: " << ptr << std::endl;
+        std::cout << "SUCCESS: Test allocation size 50. new_ptr: " << new_ptr << " new ptr: " << ptr << std::endl;
     } else {
-        std::cout << "FAIL: Test allocation size 50. head: " << head << " new ptr: " << ptr << std::endl;
+        std::cout << "FAIL: Test allocation size 50. new_ptr: " << new_ptr << " new ptr: " << ptr << std::endl;
     }
 
     ptr = smalloc(1e3);
@@ -379,27 +386,272 @@ int main() {
         std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
     }
 
+    */
 
     // Test sfree
+    /*
+    std::cout << "Test sfree" << std::endl;
+    int num_of_allocations=0, allocated_bytes=0, num_of_frees=0, free_bytes=0;
+
     ptr = smalloc(70);
-    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
+    void* new_ptr = (void*)((char*)head + size_met);
     if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+        std::cout << "SUCCESS: Test allocation size 70. head: " << head << " new ptr: " << ptr << std::endl;
     } else {
-        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-    sfree(ptr);
-    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
+        std::cout << "FAIL: Test allocation size 70. head: " << head << " new ptr: " << ptr << std::endl;
     }
 
+    num_of_allocations++;
+    allocated_bytes += 70;
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
+    }
+
+    sfree(ptr);
+    // check that the address of ptr stayed the same
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: ptr address: " << ptr << " didn't change" << std::endl;
+    } else {
+        std::cout << "FAIL: ptr address: " << ptr << " changed" << std::endl;
+    }
+
+    num_of_frees++;
+    free_bytes += 70;
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
+    }
+
+    // make sure new allocation has the same address as ptr
+    void *new_allocation = smalloc(70);
+    if(new_ptr == new_allocation && ptr == new_allocation) {
+        std::cout << "SUCCESS: new element was allocated at the same address" << std::endl;
+    } else {
+        std::cout << "FAIL: new element wasn't allocated at the same address: old addr: " << new_ptr << " new addr: " << new_allocation << std::endl;
+    }
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == 0 && _num_free_bytes() == 0) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << _num_free_blocks() << " frees of " << _num_free_bytes() << " bytes" << std::endl;
+    }
+
+    sfree(new_allocation);
+    if(new_ptr == new_allocation && ptr == new_allocation) {
+        std::cout << "SUCCESS: new element was allocated at the same address" << std::endl;
+    } else {
+        std::cout << "FAIL: new element wasn't allocated at the same address" << std::endl;
+    }
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
+    }
+
+    // try double free
+    sfree(new_allocation);
+
+    // shouldn't increase the number of frees sine we've allocated space we've already used before
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
+    }
+
+    // new allocation
+    ptr = smalloc(500);
+    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0x1F4 + _num_allocated_blocks()*size_met);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 500. head: " << head << " ptr: " << ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 500. new_ptr: " << new_ptr << " ptr: " << ptr << std::endl;
+    }
+
+    num_of_allocations++;
+    allocated_bytes += 500;
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
+    }
+
+
+    sfree(ptr);
+
+    num_of_frees++;
+    free_bytes += 500;
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
+    }
+
+    // big allocation
+    void* big_alloc_ptr = smalloc(7e5);
+    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0xAAE60 + _num_allocated_blocks()*size_met);
+    if(new_ptr == big_alloc_ptr) {
+        std::cout << "SUCCESS: Test allocation size 7e5. head: " << head << " ptr: " << big_alloc_ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 7e5. new_ptr: " << new_ptr << " ptr: " << big_alloc_ptr << std::endl;
+    }
+
+    num_of_allocations++;
+    allocated_bytes += 7e5;
+
+    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
+        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
+    }
+
+    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
+        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
+    } else {
+        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
+    }
+
+    // small allocation
+    void* small_alloc_ptr = smalloc(1);
+    new_ptr = (void*)((char*)head + size_met);
+    if(new_ptr == small_alloc_ptr) {
+        std::cout << "SUCCESS: Test allocation size 1. head: " << head << " ptr: " << small_alloc_ptr << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 1. new_ptr: " << new_ptr << " ptr: " << small_alloc_ptr << std::endl;
+    }
+
+    sfree(big_alloc_ptr);
+
+    sfree(small_alloc_ptr);
+
+    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "#" << _num_free_blocks() << " frees of " << _num_free_bytes() << " bytes" << std::endl;
+
+    */
 
     // Test scalloc
+    /*
+    std::cout << "\n" << "Test scalloc" << std::endl;
+    ptr = scalloc(3,70);
+    void* new_ptr = (void*)((char*)head + size_met);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 3*70. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+200)) << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 3*70. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    std::cout << "Test 1: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    sfree(ptr);
+
+    std::cout << "Test 1: sfree: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: sfree: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    ptr = scalloc(5,50);
+    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 5*0x32 + _num_allocated_blocks()*size_met);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 50. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+900)) << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 50. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    std::cout << "Test 2: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 2: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    ptr = scalloc(1,1e6);
+    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0xF4240 + _num_allocated_blocks()*size_met);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 1e6. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+1000)) << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 1e6. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    std::cout << "Test 3: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 3: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+    ptr = scalloc(2,1e3);
+    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 2*0x3E8 + _num_allocated_blocks()*size_met);
+    if(new_ptr == ptr) {
+        std::cout << "SUCCESS: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+400)) << std::endl;
+    } else {
+        std::cout << "FAIL: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << std::endl;
+    }
+
+    std::cout << "Test 3: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 4: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+    */
 
     // Test srealloc
+    std::cout << "\n" << "Test srealloc" << std::endl;
+    void* new_ptr;
+    ptr = srealloc(nullptr,20);
+    if(ptr == nullptr) {
+        std::cout << "SUCCESS: Test nullptr to srealloc failed as it should have." << std::endl;
+    } else {
+        std::cout << "FAIL: Test nullptr to srealloc didn't failed as it should have." << std::endl;
+    }
+
+    std::cout << "Test 1: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
+
+
+    sfree(ptr);
+
+    std::cout << "Test 1: sfree: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
+    std::cout << "Test 1: sfree: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
+
 
     return 0;
 }
