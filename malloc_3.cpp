@@ -9,6 +9,9 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
+
+
+
 struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, size is 32 bytes
     size_t size; // 8 bytes
     bool is_free; // 1 byte
@@ -122,7 +125,7 @@ void RemoveFreeItem(MallocMetadata *head, MallocMetadata *item, int index) {
 void _split_blocks(MallocMetadata *chunk_to_split, size_t allocation_size) {
     // check if after subtracting from the block size the desired allocation size + metadata size
     // we remain with at least 128 byte sized block
-    if( chunk_to_split->size - sizeof(MallocMetadata) - allocation_size < 128){
+    if(static_cast<int>(chunk_to_split->size) - static_cast<int>(sizeof(MallocMetadata)) - static_cast<int>(allocation_size) < 128){
         return;
     }
 
@@ -133,6 +136,7 @@ void _split_blocks(MallocMetadata *chunk_to_split, size_t allocation_size) {
     new_metadata->size = chunk_to_split->size - sizeof(MallocMetadata) - allocation_size;
     new_metadata->next = chunk_to_split->next;
     new_metadata->prev = chunk_to_split;
+    new_metadata->is_free = true;
     // update all necessary field such as size, prev & next for the actual allocation
     int index = GetHistogramIndex(new_metadata->size);
     AddItemBysize(free_blocks_histogram[index],new_metadata, index);
@@ -157,7 +161,9 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
             index = GetHistogramIndex(block_to_combine->next->size);
             RemoveFreeItem(free_blocks_histogram[index],block_to_combine->next,index);
             block_to_combine->size += block_to_combine->next->size + sizeof(MallocMetadata);
-            block_to_combine->next->next->prev = block_to_combine;
+            if(block_to_combine->next->next) {
+                block_to_combine->next->next->prev = block_to_combine;
+            }
             block_to_combine->next = block_to_combine->next->next;
             index = GetHistogramIndex(block_to_combine->size);
             AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
@@ -192,7 +198,9 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
         //combine the three blocks
         block_to_combine->prev->size += block_to_combine->size + block_to_combine->next->size + 2*(sizeof(MallocMetadata));
         block_to_combine->prev->next = block_to_combine->next->next;
-        block_to_combine->next->next->prev = block_to_combine->prev;
+        if(block_to_combine->next->next) {
+            block_to_combine->next->next->prev = block_to_combine->prev;
+        }
 
         //add to free blocks list
         index = GetHistogramIndex(block_to_combine->prev->size);
@@ -212,7 +220,9 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
         int index = GetHistogramIndex(block_to_combine->next->size);
         RemoveFreeItem(free_blocks_histogram[index],block_to_combine->next,index);
         block_to_combine->size += block_to_combine->next->size + sizeof(MallocMetadata);
-        block_to_combine->next->next->prev = block_to_combine;
+        if(block_to_combine->next->next) {
+            block_to_combine->next->next->prev = block_to_combine;
+        }
         block_to_combine->next = block_to_combine->next->next;
         index = GetHistogramIndex(block_to_combine->size);
         AddItemBysize(free_blocks_histogram[index], block_to_combine, index);
@@ -303,39 +313,43 @@ void* smalloc(size_t size) {
 
     // iterate over the MallocMetadata list & try to find allocation of size bytes
     int index = GetHistogramIndex(size);
-    MallocMetadata *iterator = free_blocks_histogram[index];
-    MallocMetadata *iterator_prev = iterator;
 
-    while(iterator != nullptr) {
-        if(iterator->size >= size && iterator->is_free){
-            iterator->is_free = false;
-            addr = (void*)(iterator + sizeof(MallocMetadata));
+    for(int i=index; i< 128;i++){
+        MallocMetadata *iterator = free_blocks_histogram[i];
+        MallocMetadata *iterator_prev = iterator;
 
-            // challenge 0
+        while(iterator != nullptr) {
+            if(iterator->size >= size && iterator->is_free){
+                iterator->is_free = false;
+                addr = (void*)((char*)iterator + sizeof(MallocMetadata));
 
-            // calculate bin index. I think it goes something like size / 1024
+                // challenge 0
 
-            // iterate all blocks in this list of current bin and continue to the following bins if required
+                // calculate bin index. I think it goes something like size / 1024
 
-            // for(i = bin_index; i <= 128; i++)
-            //      MallocMetadata *iterator = histogram[bin_index]
-            //      while(iterator) search for element
-            //      remove from doubly linked list (?) - I'm not sure what they mean by 'maintain valid histogram at any point'
-            //      - either we should completely remove the element
-            //      - or we should just mark it as used
-            // return the addr we found
-            RemoveFreeItem(free_blocks_histogram[index],iterator,index);
+                // iterate all blocks in this list of current bin and continue to the following bins if required
 
-            // challenge 1
+                // for(i = bin_index; i <= 128; i++)
+                //      MallocMetadata *iterator = histogram[bin_index]
+                //      while(iterator) search for element
+                //      remove from doubly linked list (?) - I'm not sure what they mean by 'maintain valid histogram at any point'
+                //      - either we should completely remove the element
+                //      - or we should just mark it as used
+                // return the addr we found
+                RemoveFreeItem(free_blocks_histogram[index],iterator,index);
 
-            // so instead of just removing from the doubly linked list we will try to call split_block?
-            // and then we should add the allocated part to the allocation list and to keep the free part in the free block hist?
-            _split_blocks(iterator,size);
-            return addr;
+                // challenge 1
+
+                // so instead of just removing from the doubly linked list we will try to call split_block?
+                // and then we should add the allocated part to the allocation list and to keep the free part in the free block hist?
+                _split_blocks(iterator,size);
+                return addr;
+            }
+            iterator_prev = iterator;
+            iterator = iterator->next_free_item;
         }
-        iterator_prev = iterator;
-        iterator = iterator->next_free_item;
     }
+
 
     // challenge 3
 
@@ -346,6 +360,13 @@ void* smalloc(size_t size) {
     // now we hold the "Wilderness" chunk and we can check how much we need to add to it in order to fulfill the
     // required allocation.
     // now, we can call sbrk with the effective size and just update the size field in the metadata of the "Wilderness" block
+    MallocMetadata *iterator = head;
+    MallocMetadata *iterator_prev = head;
+
+    while(iterator) {
+        iterator_prev = iterator;
+        iterator = iterator->next;
+    }
 
     if(iterator_prev != nullptr && iterator_prev->is_free) {
         size_t extension_size = size - iterator_prev->size;
@@ -359,6 +380,10 @@ void* smalloc(size_t size) {
             return nullptr;
         }
         iterator_prev->size += extension_size;
+        iterator_prev->is_free= false;
+
+        int index = GetHistogramIndex(iterator_prev->size);
+        RemoveFreeItem(free_blocks_histogram[index],iterator_prev,index);
 
     } else {
         // if not found - use sbrk() for allocation
@@ -631,1050 +656,86 @@ size_t _num_meta_data_bytes() {
     MallocMetadata *iterator = head;
     // iterate list & count elements which satisfy element->is_free = true
     while (iterator != nullptr) {
-        counter += iterator->size;
+        counter++;
         iterator = iterator->next;
     }
 
     iterator = head_mmap;
     // iterate list & count elements which satisfy element->is_free = true
     while (iterator != nullptr) {
-        counter += iterator->size;
+        counter++;
         iterator = iterator->next;
     }
 
     return (counter * _size_meta_data());
 }
 
-
-
-void print_free_list() {
-    MallocMetadata *iterator = free_blocks_histogram[0];
-    for (int i = 0; i < 128; ++i) {
-        while (iterator != nullptr) {
-            std::cout << "bin #" << i<< " element size: " << iterator->size << std::endl;
-            iterator = iterator->next;
-        }
-        std::cout << "====================================" << std::endl;
-    }
-}
-
+/* TEST */
 int main() {
-    // find maximal allocation for sbrk() to fail
-    // struct rlimit rlp;
-    // getrlimit(RLIMIT_DATA,&rlp);
-    // std::cout << rlp.rlim_max << std::endl;
+    // test combine of 3 blocks
+    void* p1;
+    void* p2;
+    void* p3;
 
-    //===================================================================================//
-    //===================================Test errors===================================//
-    //===================================================================================//
+    p1 = smalloc(100);
 
-    // zero size allocation
-    void* ptr;
-    int size_met = 0x20; // sizeof MallocMetadata
-    /*
-    ptr = smalloc(0);
-    if(ptr == nullptr) {
-        std::cout << "SUCCESS: Test 0 size allocation failed" << std::endl;
-    } else {
-        std::cout << "FAIL: Test 0 size allocation succeeded" << std::endl;
-    }
-
-    // big allocation
-    ptr = smalloc(1e8 + 1);
-    if(ptr == nullptr) {
-        std::cout << "SUCCESS: Test 1e8 size allocation failed" << std::endl;
-    } else {
-        std::cout << "FAIL: Test 1e8 size allocation succeeded" << std::endl;
-    }
-
-    // put size > 1e8 check in comments & try to make sbrk() fail
-    ptr = smalloc(18446744073709551615 + 1);
-    if(ptr == nullptr) {
-        std::cout << "SUCCESS: Test sbrk fail" << std::endl;
-    } else {
-        std::cout << "FAIL: Test sbrk fail" << std::endl;
-    }
-
-
-    //==================================================================================//
-    //===================================Test smalloc===================================//
-    //==================================================================================//
-
-
-    // Test concurrent allocations & check their size
-    ptr = smalloc(20);
-    void* new_ptr = (void*)((char*)head + size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 20. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 20. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    std::cout << "num of allocated blocks #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-
-
-    ptr = smalloc(50);
-    std::cout <<  _num_allocated_blocks() << std::endl;
-    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0x32 + _num_allocated_blocks()*size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 50. new_ptr: " << new_ptr << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 50. new_ptr: " << new_ptr << " new ptr: " << ptr << std::endl;
-    }
-
-    ptr = smalloc(1e3);
-    new_ptr = (void*)((char*)new_ptr + 0x32 + 0x20);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    ptr = smalloc(2*1e5);
-    new_ptr = (void*)((char*)new_ptr + 1000 + 0x20);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 2*1e5. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 2*1e5. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    ptr = smalloc(769);
-    new_ptr = (void*)((char*)new_ptr + 200000 + 0x20);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 769. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 769. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    ptr = smalloc(1);
-    new_ptr = (void*)((char*)new_ptr + 769 + 0x20);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 1. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 1. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    ptr = smalloc(3);
-    new_ptr = (void*)((char*)new_ptr + 1 + 0x20);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 3. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    */
-
-    //=================================================================================//
-    //===================================Test sfree===================================//
-    //================================================================================//
-
-    /*
-    std::cout << "Test sfree" << std::endl;
-    int num_of_allocations=0, allocated_bytes=0, num_of_frees=0, free_bytes=0;
-
-    ptr = smalloc(70);
-    void* new_ptr = (void*)((char*)head + size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 70. head: " << head << " new ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 70. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    num_of_allocations++;
-    allocated_bytes += 70;
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
-    }
-
-    sfree(ptr);
-    // check that the address of ptr stayed the same
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: ptr address: " << ptr << " didn't change" << std::endl;
-    } else {
-        std::cout << "FAIL: ptr address: " << ptr << " changed" << std::endl;
-    }
-
-    num_of_frees++;
-    free_bytes += 70;
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
-    }
-
-    // make sure new allocation has the same address as ptr
-    void *new_allocation = smalloc(70);
-    if(new_ptr == new_allocation && ptr == new_allocation) {
-        std::cout << "SUCCESS: new element was allocated at the same address" << std::endl;
-    } else {
-        std::cout << "FAIL: new element wasn't allocated at the same address: old addr: " << new_ptr << " new addr: " << new_allocation << std::endl;
-    }
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == 0 && _num_free_bytes() == 0) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << _num_free_blocks() << " frees of " << _num_free_bytes() << " bytes" << std::endl;
-    }
-
-    sfree(new_allocation);
-    if(new_ptr == new_allocation && ptr == new_allocation) {
-        std::cout << "SUCCESS: new element was allocated at the same address" << std::endl;
-    } else {
-        std::cout << "FAIL: new element wasn't allocated at the same address" << std::endl;
-    }
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
-    }
-
-    // try double free
-    sfree(new_allocation);
-
-    // shouldn't increase the number of frees sine we've allocated space we've already used before
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
-    }
-
-    // new allocation
-    ptr = smalloc(500);
-    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0x1F4 + _num_allocated_blocks()*size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 500. head: " << head << " ptr: " << ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 500. new_ptr: " << new_ptr << " ptr: " << ptr << std::endl;
-    }
-
-    num_of_allocations++;
-    allocated_bytes += 500;
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
-    }
-
-
-    sfree(ptr);
-
-    num_of_frees++;
-    free_bytes += 500;
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
-    }
-
-    // big allocation
-    void* big_alloc_ptr = smalloc(7e5);
-    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0xAAE60 + _num_allocated_blocks()*size_met);
-    if(new_ptr == big_alloc_ptr) {
-        std::cout << "SUCCESS: Test allocation size 7e5. head: " << head << " ptr: " << big_alloc_ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 7e5. new_ptr: " << new_ptr << " ptr: " << big_alloc_ptr << std::endl;
-    }
-
-    num_of_allocations++;
-    allocated_bytes += 7e5;
-
-    if(_num_allocated_blocks() == num_of_allocations && _num_allocated_bytes() == allocated_bytes) {
-        std::cout << "SUCCESS: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_allocations << " allocations of " << allocated_bytes << " bytes" << std::endl;
-    }
-
-    if(_num_free_blocks() == num_of_frees && _num_free_bytes() == free_bytes) {
-        std::cout << "SUCCESS: #" << num_of_frees << " frees of size " << free_bytes << std::endl;
-    } else {
-        std::cout << "FAIL: #" << num_of_frees << " frees of " << free_bytes << "bytes" << std::endl;
-    }
-
-    // small allocation
-    void* small_alloc_ptr = smalloc(1);
-    new_ptr = (void*)((char*)head + size_met);
-    if(new_ptr == small_alloc_ptr) {
-        std::cout << "SUCCESS: Test allocation size 1. head: " << head << " ptr: " << small_alloc_ptr << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 1. new_ptr: " << new_ptr << " ptr: " << small_alloc_ptr << std::endl;
-    }
-
-    sfree(big_alloc_ptr);
-
-    sfree(small_alloc_ptr);
-
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_free_blocks() << " frees of " << _num_free_bytes() << " bytes" << std::endl;
-
-    */
-
-
-    //==================================================================================//
-    //===================================Test scalloc===================================//
-    //==================================================================================//
-
-    /*
-    std::cout << "\n" << "Test scalloc" << std::endl;
-    ptr = scalloc(3,70);
-    void* new_ptr = (void*)((char*)head + size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 3*70. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+200)) << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 3*70. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    std::cout << "Test 1: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    sfree(ptr);
-
-    std::cout << "Test 1: sfree: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1: sfree: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    ptr = scalloc(5,50);
-    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 5*0x32 + _num_allocated_blocks()*size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 50. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+900)) << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 50. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    std::cout << "Test 2: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 2: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    ptr = scalloc(1,1e6);
-    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 0xF4240 + _num_allocated_blocks()*size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 1e6. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+1000)) << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 1e6. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    std::cout << "Test 3: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 3: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    ptr = scalloc(2,1e3);
-    new_ptr = (void*)((char*)head + _num_allocated_bytes() - 2*0x3E8 + _num_allocated_blocks()*size_met);
-    if(new_ptr == ptr) {
-        std::cout << "SUCCESS: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << " sample data: " << *(int*)(((char*)ptr+400)) << std::endl;
-    } else {
-        std::cout << "FAIL: Test allocation size 1e3. head: " << head << " new ptr: " << ptr << std::endl;
-    }
-
-    std::cout << "Test 3: scalloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 4: scalloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-    */
-
-
-    //===================================================================================//
-    //===================================Test srealloc===================================//
-    //===================================================================================//
-
-    /*
-    std::cout << "\n" << "Test srealloc" << std::endl;
-    ptr = srealloc(nullptr,20);
-    std::cout << "Test nullptr to srealloc returned the address: " << ptr << ". head is: " << head << std::endl;
-
-    std::cout << "Test 1: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    ptr = smalloc(70);
-    memset(ptr,5,10);
-
-    // should be the same addr since new size < old size
-    std::cout << "previous addr of ptr: " << ptr << std::endl;
-    ptr = srealloc(ptr,20);
-    std::cout << "Test re-allocation #0. new addr (same): " << ptr <<  " sample data: " << *(int*)ptr << std::endl;
-
-    std::cout << "Test 1: scalloc: allocated blocks(2): #" << _num_allocated_blocks() << " of(90) " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1: scalloc: free blocks(0): #" << _num_free_blocks() << " of(0) " << _num_free_bytes() << " bytes" << std::endl;
-
-    sfree(ptr);
-
-    std::cout << "Test 1.1: sfree: allocated blocks(2): #" << _num_allocated_blocks() << " of(90) " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1.1: sfree: free blocks(1): #" << _num_free_blocks() << " of(70) " << _num_free_bytes() << " bytes" << std::endl;
-
-
-    void* ptr1 = smalloc(110);
-    void* ptr2 = smalloc(279);
-    void* ptr3 = smalloc(1e4);
-    void* ptr4 = smalloc(2);
-    void* ptr5 = smalloc(5e7);
-
-    memset(ptr1,5,10);
-    memset(ptr2,5,10);
-    memset(ptr3,5,1);
-    memset(ptr4,5,1);
-    memset(ptr5,5,1);
-
-    std::cout << "previous addr of ptr1: " << ptr1 << std::endl;
-    ptr1 = srealloc(ptr1,20);
-    std::cout << "Test re-allocation #1. new addr: " << ptr1 <<  " sample data: " << *(int*)ptr1 << std::endl;
-
-    std::cout << "Test 1: srealloc: allocated blocks(6): #" << _num_allocated_blocks() << " of(50010479) " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 1: srealloc: free blocks(0): #" << _num_free_blocks() << " of(0) " << _num_free_bytes() << " bytes" << std::endl;
-
-    std::cout << "previous addr of ptr2: " << ptr2 << std::endl;
-    ptr2 = srealloc(ptr2,20);
-    std::cout << "Test re-allocation #2. new addr: " << ptr2 <<  " sample data: " << *(int*)ptr2 << std::endl;
-
-    std::cout << "Test 2: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 2: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    std::cout << "previous addr of ptr3: " << ptr3 << std::endl;
-    ptr3 = srealloc(ptr3,90);
-    std::cout << "Test re-allocation #3. new addr: " << ptr3 <<  " sample data: " << *(int*)ptr3 << std::endl;
-
-    std::cout << "Test 3: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 3: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-
-    std::cout << "previous addr of ptr4: " << ptr4 << std::endl;
-    ptr4 = srealloc(ptr4,1e6);
-    std::cout << "Test re-allocation #4. new addr: " << ptr4 <<  " sample data: " << *(int*)ptr4 << std::endl;
-
-    std::cout << "Test 4: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 4: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    sfree(ptr1);
-
-    std::cout << "Test 4.1: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 4.1: srealloc: free blocks(2): #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    sfree(ptr3);
-
-    std::cout << "Test 4.2: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 4.2: srealloc: free blocks(3): #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-
-    std::cout << "previous addr of ptr5: " << ptr5 << std::endl;
-    ptr5 = srealloc(ptr5,800);
-    std::cout << "Test re-allocation #5. new addr: " << ptr5 <<  " sample data: " << *(int*)ptr5 << std::endl;
-
-    std::cout << "Test 5: srealloc: allocated blocks: #" << _num_allocated_blocks() << " of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "Test 5: srealloc: free blocks: #" << _num_free_blocks() << " of " << _num_free_bytes() << " bytes" << std::endl;
-    */
-
-
-    //======================================================================================//
-    //===================================Test challenge 0===================================//
-    //======================================================================================//
-
-    /*
-    std::cout << "challenge 0 - sorted free blocks array" << std::endl;
-
-    ptr = smalloc(70);
-
-    std::cout << "challenge 0: Test 1: allocated blocks(1): #" << _num_allocated_blocks() << " of(70) " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "challenge 0: Test 1: free blocks(0): #" << _num_free_blocks() << " of(0) " << _num_free_bytes() << " bytes" << std::endl;
-
-
-    // double free
-    sfree(ptr);
-
-    std::cout << "challenge 0: Test 1.1: allocated blocks(1): #" << _num_allocated_blocks() << " of(70) " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "challenge 0: Test 1.1: free blocks(1): #" << _num_free_blocks() << " of(70) " << _num_free_bytes() << " bytes" << std::endl;
-
-
-    sfree(ptr);
-
-    std::cout << "challenge 0: Test 1.2: allocated blocks(1): #" << _num_allocated_blocks() << " of(70) " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "challenge 0: Test 1.2: free blocks(1): #" << _num_free_blocks() << " of(70) " << _num_free_bytes() << " bytes" << std::endl;
-
-
-    // allocate at the same address
-    ptr = smalloc(30);
-
-    std::cout << "challenge 0: Test 2: allocated blocks(1): #" << _num_allocated_blocks() << " of(70) " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "challenge 0: Test 2: free blocks(1): #" << _num_free_blocks() << " of(70) " << _num_free_bytes() << " bytes" << std::endl;
-
-
-    // print free list & make sure it is sorted
-
-    // allocate TONS
-    void* ptr1 = smalloc(100);
-    void* ptr2 = smalloc(3000);
-    void* ptr3 = smalloc(4000);
-    void* ptr4 = smalloc(3500);
-    void* ptr5 = smalloc(1e3);
-    void* ptr6 = smalloc(1500);
-    void* ptr7 = smalloc(2240);
-    void* ptr8 = smalloc(7789);
-    void* ptr9 = smalloc(1e5);
-    void* ptr10 = smalloc(14589);
-    void* ptr11 = smalloc(145678);
-    void* ptr12 = smalloc(876390);
-    void* ptr13 = smalloc(127);
-    void* ptr14 = smalloc(20);
-    void* ptr15 = smalloc(5);
-    void* ptr16 = smalloc(1347990);
-    void* ptr17 = smalloc(15);
-
-
-    sfree(ptr1);
-    sfree(ptr2);
-    sfree(ptr3);
-    sfree(ptr4);
-    sfree(ptr5);
-    sfree(ptr6);
-    sfree(ptr7);
-    sfree(ptr8);
-    sfree(ptr9);
-    sfree(ptr10);
-    sfree(ptr11);
-    sfree(ptr12);
-    sfree(ptr13);
-    sfree(ptr14);
-    sfree(ptr15);
-    sfree(ptr16);
-    sfree(ptr17);
-
-
-    // iterate many
-
-    print_free_list();
-
-    // much WOW
-
-    // over 9000!!!!!!!!!!!!!!!!!!!1
-    */
-
-    //======================================================================================//
-    //===================================Test challenge 1===================================//
-    //======================================================================================//
-
-    /*
-    void* ptr1 = smalloc(1000);
-    void* ptr2 = smalloc(1000);
-    void* ptr3 = smalloc(1000);
-    void* ptr4 = smalloc(1000);
-    void* ptr5 = smalloc(1000);
-    void* ptr6 = smalloc(1000);
-    void* ptr7 = smalloc(1000);
-    void* ptr8 = smalloc(1000);
-
-    std::cout << "addr ptr2 before call to sfree: " << ptr2 << std::endl;
-    sfree(ptr2);
-
-    void* ptr9 = smalloc(20);
-
-    // print addr
-    std::cout << "addr ptr9 after call to sfree: " << ptr9 << " should be " << ptr2 << std::endl;
-
-    // print metadata
-    std::cout << "Test 1: allocated blocks(9) #" << _num_allocated_blocks() << " of(8000) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 1: free blocks(1) #" << _num_free_blocks() << " of(800) " << _num_free_bytes() << std::endl;
-
-
-    void* ptr10 = smalloc(20);
-
-    // print addr
-    std::cout << "addr ptr10 after call to sfree: " << ptr10 << " should be " << (char*)ptr9 + 0x34 << std::endl;
-
-    // print metadata
-    std::cout << "Test 2: allocated blocks(10) #" << _num_allocated_blocks() << " of(8020) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 2: free blocks(1) #" << _num_free_blocks() << " of(780) " << _num_free_bytes() << std::endl;
-
-    void* ptr11 = smalloc(20);
-
-    // print addr
-    std::cout << "addr ptr11 after call to sfree: " << ptr11 << " should be " << (char*)ptr10 + 0x34 << std::endl;
-
-    // print metadata
-    std::cout << "Test 3: allocated blocks(11) #" << _num_allocated_blocks() << " of(8040) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 3: free blocks(1) #" << _num_free_blocks() << " of(760) " << _num_free_bytes() << std::endl;
-
-    void* ptr12 = smalloc(745); // make sure next block we need to split is the one ptr5 was allocated at
-
-    // print addr
-    std::cout << "addr ptr12: " << ptr12 << " should be " << (char*)ptr11 + 0x309 << std::endl;
-
-    // print metadata
-    std::cout << "Test 4: allocated blocks(12) #" << _num_allocated_blocks() << " of(8785) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 4: free blocks(1) #" << _num_free_blocks() << " of(15) " << _num_free_bytes() << std::endl;
-
-
-
-
-    std::cout << "addr ptr5 before call to sfree: " << ptr5 << std::endl;
-    sfree(ptr5);
-
-    // print metadata
-    std::cout << "Test 5: allocated blocks(12) #" << _num_allocated_blocks() << " of(8758) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 5: free blocks(2) #" << _num_free_blocks() << " of(1015) " << _num_free_bytes() << std::endl;
-
-    void* ptr13 = smalloc(20);
-
-    // print addr
-    std::cout << "addr ptr13 after call to sfree: " << ptr13 << " should be " << (char*)ptr5 + 0x34 << std::endl;
-
-    // print metadata
-    std::cout << "Test 6: allocated blocks(13) #" << _num_allocated_blocks() << " of(8778) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 6: free blocks(2) #" << _num_free_blocks() << " of(995) " << _num_free_bytes() << std::endl;
-
-
-    void* ptr14 = smalloc(20);
-
-    // print addr
-    std::cout << "addr ptr14 after call to sfree: " << ptr14 << " should be " << (char*)ptr13 + 0x34 << std::endl;
-
-    // print metadata
-    std::cout << "Test 7: allocated blocks(14) #" << _num_allocated_blocks() << " of(8798) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 7: free blocks(2) #" << _num_free_blocks() << " of(975) " << _num_free_bytes() << std::endl;
-
-
-    void* ptr15 = smalloc(20);
-
-    // print addr
-    std::cout << "addr ptr15 after call to sfree: " << ptr15 << " should be " << (char*)ptr14 + 0x34 << std::endl;
-
-    // print metadata
-    std::cout << "Test 8: allocated blocks(15) #" << _num_allocated_blocks() << " of(8818) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 8: free blocks(2) #" << _num_free_blocks() << " of(955) " << _num_free_bytes() << std::endl;
-
-    void* ptr16 = smalloc(800);
-
-    // print addr
-    std::cout << "addr ptr16 after call to sfree: " << ptr16 << " should be " << (char*)ptr15 + 0x340 << std::endl;
-
-    // print metadata
-    std::cout << "Test 9: allocated blocks(16) #" << _num_allocated_blocks() << " of(9618) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 9: free blocks(2) #" << _num_free_blocks() << " of(155) " << _num_free_bytes() << std::endl;
-
-
-
-    sfree(ptr8);
-    // print metadata
-    std::cout << "Test 10: allocated blocks(16) #" << _num_allocated_blocks() << " of(9618) " << _num_allocated_bytes() << std::endl;
-    std::cout << "Test 10: free blocks(3) #" << _num_free_blocks() << " of(1155) " << _num_free_bytes() << std::endl;
-    */
-
-
-
-    //======================================================================================//
-    //===================================Test challenge 2===================================//
-    //======================================================================================//
-
-    /*
-    std::cout << "Test challenge 2 - combine free blocks" << std::endl;
-
-    void* ptr1 = smalloc(1000);
-    void* ptr2 = smalloc(1000);
-    void* ptr3 = smalloc(1000);
-    void* ptr4 = smalloc(1000);
-    void* ptr5 = smalloc(1000);
-    void* ptr6 = smalloc(1000);
-    void* ptr7 = smalloc(1000);
-    void* ptr8 = smalloc(1000);
-    void* ptr9 = smalloc(1000);
-
-    std::cout << "allocated ptr1-9 of size 1000 each" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << std::endl;
-
-    // free adjacent free blocks & print free list
-
-    sfree(ptr3);
-    std::cout << "freed ptr3" << std::endl;
-    print_free_list();
-
-    std::cout << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    sfree(ptr4);
-    std::cout << "freed ptr4" << std::endl;
-    print_free_list();
-    std::cout << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    sfree(ptr2);
-    std::cout << "freed ptr2" << std::endl;
-    print_free_list();
-    std::cout << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    sfree(ptr6);
-    std::cout << "freed ptr6" << std::endl;
-    print_free_list();
-    std::cout << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    sfree(ptr5);
-    std::cout << "freed ptr5" << std::endl;
-    print_free_list();
-    std::cout << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    sfree(ptr1);
-    std::cout << "freed ptr1" << std::endl;
-    print_free_list();
-    std::cout << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    sfree(ptr7);
-    std::cout << "freed ptr7" << std::endl;
-    print_free_list();
-    std::cout << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "#" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-    */
-
-
-    //======================================================================================//
-    //===================================Test challenge 3===================================//
-    //======================================================================================//
-
-    /*
-    std::cout << "Test challenge 3 - wildeness block" << std::endl;
-
-    // allocate 3 blocks
-    void* ptr1 = smalloc(100);
-    void* ptr2 = smalloc(100);
-    void* ptr3 = smalloc(100);
-
-    std::cout << " addr ptr1: " << ptr1 << " addr ptr2: " << ptr2 << " addr ptr3: " << ptr3 << std::endl;
-    std::cout << std::endl;
-
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #3 allocations of 300 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    // free wilderness
-    sfree(ptr3);
-
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #3 allocations of 300 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #1 frees of 100 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    // allocate block just a bit bigger than wilderness block
-    void* ptr4 = smalloc(120);
-
-    // make sure ptr4 has the highest addr
-    std::cout << " addr ptr4: " << ptr4 << std::endl;
-    std::cout << std::endl;
-
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #4 allocations of 320 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #1 frees of 100 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    // free wilderness
-    sfree(ptr4);
-
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #4 allocations of 320 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #2 frees of 120 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    // allocate block just a bit bigger than wilderness block
-    void* ptr5 = smalloc(140);
-
-    // make sure ptr4 has the highest addr
-    std::cout << " addr ptr5: " << ptr5 << std::endl;
+    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
+    std::cout << "EXP: #1 allocated blocks of size 100" << std::endl;
+    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
+    std::cout << "EXP: #0 free blocks of size 0" << std::endl;
+    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
+    std::cout << "EXP: #48 metadata bytes" << std::endl;
     std::cout << std::endl;
 
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #5 allocations of 340 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #2 frees of 120 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-    */
-
-    //======================================================================================//
-    //===================================Test challenge 4===================================//
-    //======================================================================================//
-
-    /*
-    std::cout << "Test challenge 4 - allocations using mmap & frees using munmap" << std::endl;
-    std::cout << std::endl;
-
-    size_t mmap_size_alloc = 128*1024 + 1;
-
-    // allocate 8 blocks using mmap
-    void* ptr1 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr1: " << ptr1 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #1 allocations of (128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    void* ptr2 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr2: " << ptr2 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #2 allocations of 2*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    void* ptr3 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr3: " << ptr3 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #3 allocations of 3*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    // call free
-    sfree(ptr1);
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #2 allocations of 2*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-
-    void* ptr4 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr4: " << ptr4 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #3 allocations of 3*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    void* ptr5 = smalloc(mmap_size_alloc);
+    p2 = smalloc(100);
 
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr5: " << ptr5 << std::endl;
+    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
+    std::cout << "EXP: #2 allocated blocks of size 200" << std::endl;
+    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
+    std::cout << "EXP: #0 free blocks of size 0" << std::endl;
+    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
+    std::cout << "EXP: #96 metadata bytes" << std::endl;
     std::cout << std::endl;
 
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #4 allocations of 4*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    void* ptr6 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr6: " << ptr6 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #5 allocations of 5*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    // call free
-    sfree(ptr3);
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #4 allocations of 4*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    void* ptr7 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr7: " << ptr7 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #5 allocations of 5*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
+    p3 = smalloc(100);
 
-    void* ptr8 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr8: " << ptr8 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #6 allocations of 6*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
-
-    void* ptr9 = smalloc(mmap_size_alloc);
-
-    // we expect to see that those are independent regions of memory
-    std::cout << "addr of ptr9: " << ptr9 << std::endl;
-    std::cout << std::endl;
-
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #7 allocations of 7*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
+    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
+    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
+    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
+    std::cout << "EXP: #0 free blocks of size 0" << std::endl;
+    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
+    std::cout << "EXP: #144 metadata bytes" << std::endl;
     std::cout << std::endl;
-    std::cout << std::endl;
-
-    // call free
-    sfree(ptr3);
 
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #6 allocations of 6*(128*1024+1) bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
-    std::cout << std::endl;
-    std::cout << std::endl;
 
-    void* ptr10 = smalloc(100);
-    std::cout << "addr of head: " << head << " addr of ptr10 (allocated using sbrk): " << ptr10 << std::endl;
-    std::cout << std::endl;
+    sfree(p1);
 
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #7 allocations of 6*(128*1024+1)+100 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #0 frees of 0 bytes" << std::endl;
+    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
+    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
+    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
+    std::cout << "EXP: #1 free blocks of size 100" << std::endl;
+    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
+    std::cout << "EXP: #144 metadata bytes" << std::endl;
     std::cout << std::endl;
-    std::cout << std::endl;
-
 
-    sfree(ptr10);
+    sfree(p3);
 
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #7 allocations of 6*(128*1024+1)+100 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #1 frees of 100 bytes" << std::endl;
+    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
+    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
+    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
+    std::cout << "EXP: #2 free blocks of size 200" << std::endl;
+    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
+    std::cout << "EXP: #144 metadata bytes" << std::endl;
     std::cout << std::endl;
-    std::cout << std::endl;
 
-    sfree(ptr9);
+    sfree(p2);
 
-    // print stat
-    std::cout << "stat: #" << _num_allocated_blocks() << " allocations of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #6 allocations of 5*(128*1024+1)+100 bytes" << std::endl;
-    std::cout << "stat: #" << _num_allocated_blocks() << " frees of " << _num_allocated_bytes() << " bytes" << std::endl;
-    std::cout << "exp: #1 frees of 100 bytes" << std::endl;
+    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
+    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
+    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
+    std::cout << "EXP: #1 free blocks of size 300" << std::endl;
+    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
+    std::cout << "EXP: #144 metadata bytes" << std::endl;
     std::cout << std::endl;
-    std::cout << std::endl;
-    */
-
     return 0;
 }
