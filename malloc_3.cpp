@@ -277,7 +277,7 @@ void* smalloc(size_t size) {
         }
 
         //void* addr = mmap(NULL, size + sizeof(MallocMetadata), prot, flags, fildes, 0);
-        void* addr = mmap(NULL, size + sizeof(MallocMetadata), PROT_WRITE | PROT_READ | PROT_EXEC , MAP_PRIVATE, 0, 0);
+        void* addr = mmap(NULL, size + sizeof(MallocMetadata), PROT_WRITE | PROT_READ ,MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if(addr == (void*)-1) {
             return nullptr;
         }
