@@ -2,18 +2,11 @@
 // Created by student on 6/18/21.
 //
 
-// For Debugging
-#include <iostream>
-
 #include <cstring>
 #include <unistd.h>
 #include <sys/mman.h>
 
-#include <cstdio>
-#include <assert.h>
-
-
-struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, size is 32 bytes
+struct MallocMetadata { // size of metadata is 41 -> rounded to a power of 2, size is 48 bytes
     size_t size; // 8 bytes
     bool is_free; // 1 byte
     MallocMetadata *next; // 8 bytes
@@ -21,9 +14,6 @@ struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, si
     MallocMetadata *next_free_item; // 8 bytes
     MallocMetadata *prev_free_item; // 8 bytes
 };
-
-#define META_SIZE sizeof(MallocMetadata) // put your meta data name here.
-
 
 MallocMetadata *head = nullptr;
 
@@ -487,8 +477,26 @@ void sfree(void* p){
     // challenge 4
     // check if size fits mmap
     if(metadata->size > 128 * 1024) {
+
+        /* remove element from head_mmap */
+
+        // p is head
+        if((MallocMetadata*)((char*)p - sizeof(MallocMetadata)) == head_mmap){
+            // if p is the only element metadata->next = nullptr
+            head_mmap = metadata->next;
+        } else { // p is not head, so there's no need to touch the head_mmap pointer
+            // if it's in the middle/last
+            metadata->prev = metadata->next;
+
+            // case p is not the last element
+            if(metadata->next != nullptr) {
+                metadata->next->prev = metadata->prev;
+            }
+        }
+
         // now call munmap
         munmap(metadata, metadata->size + sizeof(MallocMetadata));
+
         return;
     }
 
@@ -698,3 +706,5 @@ size_t _num_meta_data_bytes() {
 
     return (counter * _size_meta_data());
 }
+
+
