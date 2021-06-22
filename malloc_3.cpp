@@ -9,7 +9,8 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
-
+#include <cstdio>
+#include <assert.h>
 
 
 struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, size is 32 bytes
@@ -20,6 +21,9 @@ struct MallocMetadata { // size of metadata is 25 -> rounded to a power of 2, si
     MallocMetadata *next_free_item; // 8 bytes
     MallocMetadata *prev_free_item; // 8 bytes
 };
+
+#define META_SIZE sizeof(MallocMetadata) // put your meta data name here.
+
 
 MallocMetadata *head = nullptr;
 
@@ -314,7 +318,7 @@ void* smalloc(size_t size) {
     // iterate over the MallocMetadata list & try to find allocation of size bytes
     int index = GetHistogramIndex(size);
 
-    for(int i=index; i< 128;i++){
+    for(int i=index; i < 128;i++){
         MallocMetadata *iterator = free_blocks_histogram[i];
         MallocMetadata *iterator_prev = iterator;
 
@@ -527,8 +531,33 @@ void* srealloc(void* oldp, size_t size) {
         return oldp;
     }
 
+    // check if it's the wilderness block
+    MallocMetadata* iterator = head;
+    MallocMetadata* iterator_prev = head;
+    while (iterator) {
+        iterator_prev = iterator;
+        iterator = iterator->next;
+    }
+
+    if((void*)iterator_prev == (void*)((char*)oldp - sizeof(MallocMetadata))) {
+        size_t extension_size = size - iterator_prev->size;
+
+        addr = sbrk(extension_size);
+
+        // check return values from sbrk(). by sbrk() documentation https://nxmnpg.lemoda.net/2/sbrk should do the following
+        // res = sbrk() ...
+        // if (res == (void*)-1) ...
+        if(addr == (void*)-1) {
+            return nullptr;
+        }
+
+        iterator_prev->size += extension_size;
+        return (void*)((char*)iterator_prev + sizeof(MallocMetadata));
+    }
+
     // use addr = smalloc to allocate space - check for success
     addr = smalloc(size);
+
     if(addr == (void*)-1) {
         return nullptr;
     }
@@ -537,7 +566,7 @@ void* srealloc(void* oldp, size_t size) {
     // as indicated here http://www.cplusplus.com/reference/cstring/memcpy/
     // no need to check validity of result (they didn't ask for it in the pdf and I'm not sure how to do it properly)
     // the check we've used (*(int*)res > 0) causes SIGSEGV :(
-    void* res = memcpy(addr, oldp, size_oldp);
+    memcpy(addr, oldp, size_oldp);
 
 
     // perhaps we should change that to sfree(oldp) and then sfree will handle all the updates of the free block hist?
@@ -668,74 +697,4 @@ size_t _num_meta_data_bytes() {
     }
 
     return (counter * _size_meta_data());
-}
-
-/* TEST */
-int main() {
-    // test combine of 3 blocks
-    void* p1;
-    void* p2;
-    void* p3;
-
-    p1 = smalloc(100);
-
-    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
-    std::cout << "EXP: #1 allocated blocks of size 100" << std::endl;
-    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
-    std::cout << "EXP: #0 free blocks of size 0" << std::endl;
-    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
-    std::cout << "EXP: #48 metadata bytes" << std::endl;
-    std::cout << std::endl;
-
-    p2 = smalloc(100);
-
-    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
-    std::cout << "EXP: #2 allocated blocks of size 200" << std::endl;
-    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
-    std::cout << "EXP: #0 free blocks of size 0" << std::endl;
-    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
-    std::cout << "EXP: #96 metadata bytes" << std::endl;
-    std::cout << std::endl;
-
-    p3 = smalloc(100);
-
-    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
-    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
-    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
-    std::cout << "EXP: #0 free blocks of size 0" << std::endl;
-    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
-    std::cout << "EXP: #144 metadata bytes" << std::endl;
-    std::cout << std::endl;
-
-
-    sfree(p1);
-
-    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
-    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
-    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
-    std::cout << "EXP: #1 free blocks of size 100" << std::endl;
-    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
-    std::cout << "EXP: #144 metadata bytes" << std::endl;
-    std::cout << std::endl;
-
-    sfree(p3);
-
-    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
-    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
-    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
-    std::cout << "EXP: #2 free blocks of size 200" << std::endl;
-    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
-    std::cout << "EXP: #144 metadata bytes" << std::endl;
-    std::cout << std::endl;
-
-    sfree(p2);
-
-    std::cout << "#" << _num_allocated_blocks() << " allocated blocks of size " << _num_allocated_bytes() << std::endl;
-    std::cout << "EXP: #3 allocated blocks of size 300" << std::endl;
-    std::cout << "#" << _num_free_blocks() << " free blocks of size " << _num_free_bytes()<< std::endl;
-    std::cout << "EXP: #1 free blocks of size 300" << std::endl;
-    std::cout << "#" << _num_meta_data_bytes() << " num metadata bytes"<< std::endl;
-    std::cout << "EXP: #144 metadata bytes" << std::endl;
-    std::cout << std::endl;
-    return 0;
 }
