@@ -269,7 +269,7 @@ void* smalloc(size_t size) {
     // off: 0 (tutorial)
 
     // check addr validity
-    if(size >= 128*1024){
+    if(size > 128*1024){
         MallocMetadata *iterator = head_mmap;
         MallocMetadata *iterator_prev = iterator;
 
@@ -471,6 +471,10 @@ void sfree(void* p){
     }
     // calculate metadata
     MallocMetadata* metadata = (MallocMetadata*)((char*)p - sizeof(MallocMetadata));
+
+    // by pdf if block is free, simply return
+    if(metadata->is_free) return;
+
     // mark chunk as free
     metadata->is_free = true;
 

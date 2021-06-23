@@ -147,6 +147,9 @@ void sfree(void* p){
     // calculate somehow block_to_free = &p - sizeof(MallocMetadata)
     MallocMetadata* metadata = (MallocMetadata*)((char*)p - sizeof(MallocMetadata));
 
+    // by pdf if block is free, simply return
+    if(metadata->is_free) return;
+
     // mark bock_to_free->is_free = true;
     metadata->is_free = true;
 }
