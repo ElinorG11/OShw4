@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
+
 struct MallocMetadata { // size of metadata is 41 -> rounded to a power of 2, size is 48 bytes
     size_t size; // 8 bytes
     bool is_free; // 1 byte
@@ -578,6 +579,9 @@ void* srealloc(void* oldp, size_t size) {
     // as indicated here http://www.cplusplus.com/reference/cstring/memcpy/
     // no need to check validity of result (they didn't ask for it in the pdf and I'm not sure how to do it properly)
     // the check we've used (*(int*)res > 0) causes SIGSEGV :(
+
+    // Piazza: consider using memmove instead
+    // memmove(addr, oldp, size_oldp);
     memcpy(addr, oldp, size_oldp);
 
 

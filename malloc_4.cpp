@@ -505,6 +505,10 @@ void sfree(void* p){
     }
     // calculate metadata
     MallocMetadata* metadata = (MallocMetadata*)((char*)p - sizeof(MallocMetadata));
+
+    // by pdf if block is free, simply return
+    if(metadata->is_free) return;
+
     // mark chunk as free
     metadata->is_free = true;
 
