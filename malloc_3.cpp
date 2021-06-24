@@ -5,17 +5,19 @@
 #include <cstring>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <iostream>
 
 
-struct MallocMetadata { // size of metadata is 41 -> rounded to a power of 2, size is 48 bytes
+struct MallocMetadata { // size of metadata is 57 -> rounded to a power of 2, size is 64 bytes
     size_t size; // 8 bytes
     bool is_free; // 1 byte
     MallocMetadata *next; // 8 bytes
     MallocMetadata *prev; // 8 bytes
+    MallocMetadata *next_mmap; // 8 bytes
+    MallocMetadata *prev_mmap; // 8 bytes
     MallocMetadata *next_free_item; // 8 bytes
     MallocMetadata *prev_free_item; // 8 bytes
 };
+
 
 MallocMetadata *head = nullptr;
 
@@ -230,6 +232,67 @@ void _combine_blocks(MallocMetadata *block_to_combine) {
     return;
 }
 
+/* adds item to head_mmap list. we assume the following fields are updated:
+ * item_to_add->size, item_to_add->is_free, item_to_add->next_free_item, item_to_add->prev_free_item,
+ * item_to_add->next, item_to_add->prev
+ * should update only: next_mmap, prev_mmap fields
+ * */
+void _add_to_mmap(MallocMetadata *item_to_add) {
+    // case head is null
+    if(head_mmap == nullptr) {
+        item_to_add->prev_mmap = nullptr;
+        head_mmap = item_to_add;
+        return;
+    }
+
+    // case item should be added last
+    MallocMetadata *iterator = head_mmap;
+    MallocMetadata *iterator_prev = head_mmap;
+    while (iterator != nullptr) {
+        iterator_prev = iterator;
+        iterator = iterator->next_mmap;
+    }
+
+    iterator_prev->next_mmap = item_to_add;
+    item_to_add->prev_mmap = iterator_prev;
+    return;
+}
+
+/* removes item from head_mmap list. we assume the following fields are updated:
+ * item_to_add->size, item_to_add->is_free, item_to_add->next_free_item, item_to_add->prev_free_item,
+ * item_to_add->next, item_to_add->prev
+ * should update only: next_mmap, prev_mmap fields
+ * */
+void _remove_from_mmap(MallocMetadata *item_to_remove) {
+    // case it's the first - don't forget to update head
+    if(item_to_remove == head_mmap) {
+        // case there's only one - don't forget to update head
+        if(head_mmap->next_mmap == nullptr) {
+            head_mmap = nullptr;
+            item_to_remove->next_mmap = nullptr;
+            return;
+        }
+        head_mmap = item_to_remove->next_mmap;
+        item_to_remove->next_mmap->prev_mmap = nullptr;
+        item_to_remove->next_mmap = nullptr;
+        return;
+    }
+
+    // case it's last
+    if(item_to_remove->next_mmap == nullptr) {
+        item_to_remove->prev_mmap->next = nullptr;
+        item_to_remove->prev_mmap = nullptr;
+        return;
+    }
+
+    // case it's in the middle - think about corner case of 3 elements (?)
+    item_to_remove->prev_mmap->next_mmap = item_to_remove->next_mmap;
+    item_to_remove->next_mmap->prev_mmap = item_to_remove->prev_mmap;
+    item_to_remove->next_mmap = nullptr;
+    item_to_remove->prev_mmap = nullptr;
+    return;
+}
+
 
 /* Searches for a free block with up to ‘size’ bytes or allocates (sbrk()) one if none are found.
  * Return value:
@@ -279,7 +342,7 @@ void* smalloc(size_t size) {
             // we just need to get to the end of the list (no free block which were allocated by mmap since munmap()
             // removes the virtual memory area
             iterator_prev = iterator;
-            iterator = iterator->next_free_item;
+            iterator = iterator->next_mmap;
         }
 
         //void* addr = mmap(NULL, size + sizeof(MallocMetadata), prot, flags, fildes, 0);
@@ -292,16 +355,11 @@ void* smalloc(size_t size) {
         new_metadata->size = size;
         new_metadata->is_free = false;
         new_metadata->next = nullptr;
+        new_metadata->prev = nullptr;
         new_metadata->next_free_item = nullptr;
         new_metadata->prev_free_item = nullptr;
 
-        if(head_mmap == nullptr) {
-            head_mmap = new_metadata;
-            new_metadata->prev = nullptr;
-        } else {
-            new_metadata->prev = iterator_prev;
-            iterator_prev->next = new_metadata;
-        }
+        _add_to_mmap(new_metadata);
 
         addr = (void*)((char*)addr + sizeof(MallocMetadata));
         return addr;
@@ -472,20 +530,21 @@ void sfree(void* p){
         return;
     }
     // calculate metadata
-    MallocMetadata* metadata = (MallocMetadata*)((char*)p - sizeof(MallocMetadata));
+    MallocMetadata* p_metadata = (MallocMetadata*)((char*)p - sizeof(MallocMetadata));
 
     // by pdf if block is free, simply return
-    if(metadata->is_free) return;
+    if(p_metadata->is_free) return;
 
     // mark chunk as free
-    metadata->is_free = true;
+    p_metadata->is_free = true;
 
     // challenge 4
     // check if size fits mmap
-    if(metadata->size > 128 * 1024) {
+    if(p_metadata->size > 128 * 1024) {
 
         /* remove element from head_mmap */
-
+        _remove_from_mmap(p_metadata);
+        /*
         // p is head
         if((MallocMetadata*)((char*)p - sizeof(MallocMetadata)) == head_mmap){
             // if p is the only element metadata->next = nullptr
@@ -498,17 +557,17 @@ void sfree(void* p){
             if(metadata->next != nullptr) {
                 metadata->next->prev = metadata->prev;
             }
-        }
+        }*/
 
         // now call munmap
-        munmap(metadata, metadata->size + sizeof(MallocMetadata));
+        munmap(p_metadata, p_metadata->size + sizeof(MallocMetadata));
 
         return;
     }
 
     // challenge 3
     // combine adds item to free block list
-    _combine_blocks(metadata);
+    _combine_blocks(p_metadata);
     return;
 }
 
@@ -582,8 +641,8 @@ void* srealloc(void* oldp, size_t size) {
     // the check we've used (*(int*)res > 0) causes SIGSEGV :(
 
     // Piazza: consider using memmove instead
-    // memmove(addr, oldp, size_oldp);
-    memcpy(addr, oldp, size_oldp);
+    memmove(addr, oldp, size_oldp);
+    // memcpy(addr, oldp, size_oldp);
 
 
     // perhaps we should change that to sfree(oldp) and then sfree will handle all the updates of the free block hist?
@@ -654,7 +713,7 @@ size_t _num_allocated_blocks() {
     // iterate mmap allocation list & count elements which satisfy element->is_free = true
     while (iterator != nullptr) {
         counter++;
-        iterator = iterator->next;
+        iterator = iterator->next_mmap;
     }
 
     return counter;
@@ -680,7 +739,7 @@ size_t _num_allocated_bytes() {
     // iterate list & count elements which satisfy element->is_free = true
     while (iterator != nullptr) {
         counter += iterator->size;
-        iterator = iterator->next;
+        iterator = iterator->next_mmap;
     }
 
     return counter;
@@ -710,21 +769,9 @@ size_t _num_meta_data_bytes() {
     // iterate list & count elements
     while (iterator != nullptr) {
         counter++;
-        iterator = iterator->next;
+        iterator = iterator->next_mmap;
     }
 
     return (counter * _size_meta_data());
 }
 
-int main() {
-    void *p1, *p2, *p3;
-    p1 = smalloc(128*1024+1);
-    p2 = smalloc(128*1024+1);
-    std::cout << " " << _num_free_bytes() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << " " << _num_allocated_bytes() << " " << _num_allocated_blocks() << std::endl;
-
-    p3 = smalloc(128*1024+1);
-    std::cout << " " << _num_free_bytes() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << " " << _num_allocated_bytes() << " " << _num_allocated_blocks() << std::endl;
-
-    sfree(p2);
-    std::cout << " " << _num_free_bytes() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << " " << _num_allocated_bytes() << " " << _num_allocated_blocks() << std::endl;
-}
