@@ -5,6 +5,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <iostream>
 
 
 struct MallocMetadata { // size of metadata is 41 -> rounded to a power of 2, size is 48 bytes
@@ -491,7 +492,7 @@ void sfree(void* p){
             head_mmap = metadata->next;
         } else { // p is not head, so there's no need to touch the head_mmap pointer
             // if it's in the middle/last
-            metadata->prev = metadata->next;
+            metadata->prev->next = metadata->next; // prev isn't null for sure since we're not head
 
             // case p is not the last element
             if(metadata->next != nullptr) {
@@ -706,7 +707,7 @@ size_t _num_meta_data_bytes() {
     }
 
     iterator = head_mmap;
-    // iterate list & count elements which satisfy element->is_free = true
+    // iterate list & count elements
     while (iterator != nullptr) {
         counter++;
         iterator = iterator->next;
@@ -715,4 +716,15 @@ size_t _num_meta_data_bytes() {
     return (counter * _size_meta_data());
 }
 
+int main() {
+    void *p1, *p2, *p3;
+    p1 = smalloc(128*1024+1);
+    p2 = smalloc(128*1024+1);
+    std::cout << " " << _num_free_bytes() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << " " << _num_allocated_bytes() << " " << _num_allocated_blocks() << std::endl;
 
+    p3 = smalloc(128*1024+1);
+    std::cout << " " << _num_free_bytes() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << " " << _num_allocated_bytes() << " " << _num_allocated_blocks() << std::endl;
+
+    sfree(p2);
+    std::cout << " " << _num_free_bytes() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << " " << _num_allocated_bytes() << " " << _num_allocated_blocks() << std::endl;
+}

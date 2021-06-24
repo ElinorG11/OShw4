@@ -5,7 +5,6 @@
 #include <cstring>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <iostream>
 
 
 struct MallocMetadata { // size of metadata is 41 -> rounded to a power of 2, size is 48 bytes
@@ -301,7 +300,7 @@ void* smalloc(size_t size) {
     // off: 0 (tutorial)
 
     // check addr validity
-    if(size >= 128*1024){
+    if(size > 128*1024){
         MallocMetadata *iterator = head_mmap;
         MallocMetadata *iterator_prev = iterator;
 
@@ -750,24 +749,3 @@ size_t _num_meta_data_bytes() {
     return (counter * _size_meta_data());
 }
 
-int main() {
-    void *p1, *p2, *p3, *p4;
-
-    p1 = smalloc(125);
-
-    std::cout << _num_allocated_blocks() << " " << _num_allocated_bytes() << " " << _num_free_blocks() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << std::endl;
-
-    p2 = smalloc(789);
-
-    std::cout << _num_allocated_blocks() << " " << _num_allocated_bytes() << " " << _num_free_blocks() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << std::endl;
-
-    p3 = smalloc(128*1024+1);
-
-    std::cout << _num_allocated_blocks() << " " << _num_allocated_bytes() << " " << _num_free_blocks() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << std::endl;
-
-    p4 = smalloc(3);
-
-    std::cout << _num_allocated_blocks() << " " << _num_allocated_bytes() << " " << _num_free_blocks() << " " << _num_free_bytes() << " " << _num_meta_data_bytes() << std::endl;
-
-    return 0;
-}
